@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listComments, createComment } from "@/lib/repositories/comments";
-import { CommentCreateSchema, isUuid } from "@/lib/validation";
+import { CommentCreateSchema, isBigintId } from "@/lib/validation";
 import { writesDisabled } from "@/lib/write-guard";
 
 export async function GET(
@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const comments = await listComments(id);
   return NextResponse.json(comments);
 }
@@ -20,7 +20,7 @@ export async function POST(
   const blocked = writesDisabled(); if (blocked) return blocked;
 
   const { id } = await params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   let body: unknown;
   try {

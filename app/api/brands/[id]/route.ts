@@ -5,7 +5,7 @@ import {
   deleteBrand,
   checkDuplicateExcept,
 } from "@/lib/repositories/brands";
-import { BrandUpdateSchema, isUuid } from "@/lib/validation";
+import { BrandUpdateSchema, isBigintId } from "@/lib/validation";
 import { writesDisabled } from "@/lib/write-guard";
 
 export async function GET(
@@ -13,7 +13,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const brand = await getBrandById(id);
   if (!brand) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(brand);
@@ -26,7 +26,7 @@ export async function PUT(
   const blocked = writesDisabled(); if (blocked) return blocked;
 
   const { id } = await params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   let body: unknown;
   try {
@@ -64,7 +64,7 @@ export async function DELETE(
   const blocked = writesDisabled(); if (blocked) return blocked;
 
   const { id } = await params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   await deleteBrand(id);
   return NextResponse.json({ success: true });
 }

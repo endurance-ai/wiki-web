@@ -1,44 +1,50 @@
 import "server-only";
 import { pool } from "@/lib/db";
 import type {
-  Brand,
+  BrandNode,
   BrandWithNode,
   BrandWithNodeKeywords,
   BrandWithDetail,
 } from "@/lib/types";
 
 // Base brand columns (camelCase aliased). Prefix `b.` so it composes inside JOINs.
+// bigint ids -> ::text because the frontend uses string ids. brand_name -> name,
+// primary_style_node_id -> nodeId to keep the pre-migration wire shape.
 const BRAND_COLS = `
-  b.id,
-  b.name,
-  b.instagram_handle AS "instagramHandle",
-  b.thumbnail_url    AS "thumbnailUrl",
-  b.node_id          AS "nodeId",
-  b.x_position       AS "xPosition",
-  b.y_position       AS "yPosition",
-  b.created_at       AS "createdAt",
-  b.updated_at       AS "updatedAt",
-  b.instagram_url    AS "instagramUrl",
-  b.feed_thumbnails  AS "feedThumbnails"
+  b.id::text                    AS id,
+  b.brand_name                  AS name,
+  b.instagram_handle            AS "instagramHandle",
+  b.instagram_url               AS "instagramUrl",
+  b.thumbnail_url               AS "thumbnailUrl",
+  b.primary_style_node_id::text AS "nodeId",
+  b.x_position                  AS "xPosition",
+  b.y_position                  AS "yPosition",
+  b.updated_at                  AS "createdAt",
+  b.updated_at                  AS "updatedAt",
+  b.feed_thumbnails             AS "feedThumbnails"
 `;
 
-// Joined node object (NULL when brand has no node), matching Prisma `node` include.
+// Joined style cluster object (NULL when brand has no primary cluster), matching
+// the pre-migration `node` include shape (now sourced from style_nodes).
 const NODE_JSON = `
   CASE WHEN n.id IS NULL THEN NULL ELSE json_build_object(
-    'id', n.id,
-    'name', n.name,
-    'description', n.description,
+    'id', n.id::text,
+    'code', n.code,
+    'name', n.name_ko,
+    'nameEn', n.name_en,
     'color', n.color,
+    'mood', n.mood,
+    'description', n.mood,
+    'isActive', n.is_active,
     'createdAt', n.created_at,
-    'axisXLabel', n.axis_x_label,
-    'axisYLabel', n.axis_y_label
+    'updatedAt', n.updated_at
   ) END AS "node"
 `;
 
-// Aggregated keywords array (empty array when none), matching Prisma `keywords` include.
+// Aggregated keywords array (empty array when none).
 const KEYWORDS_JSON = `
   COALESCE(
-    (SELECT json_agg(json_build_object('id', k.id, 'brandId', k.brand_id, 'keyword', k.keyword))
+    (SELECT json_agg(json_build_object('id', k.id::text, 'brandId', k.brand_id::text, 'keyword', k.keyword))
      FROM brand_keywords k WHERE k.brand_id = b.id),
     '[]'::json
   ) AS "keywords"
@@ -47,9 +53,9 @@ const KEYWORDS_JSON = `
 export async function listBrands(): Promise<BrandWithNodeKeywords[]> {
   const res = await pool.query(
     `SELECT ${BRAND_COLS}, ${NODE_JSON}, ${KEYWORDS_JSON}
-     FROM brands b
-     LEFT JOIN brand_nodes n ON n.id = b.node_id
-     ORDER BY b.created_at ASC`
+     FROM brand_nodes b
+     LEFT JOIN style_nodes n ON n.id = b.primary_style_node_id
+     ORDER BY b.brand_name ASC`
   );
   return res.rows as BrandWithNodeKeywords[];
 }
@@ -60,7 +66,7 @@ export async function getBrandById(id: string): Promise<BrandWithDetail | null> 
             COALESCE(
               (SELECT json_agg(json_build_object(
                  'id', c.id,
-                 'brandId', c.brand_id,
+                 'brandId', c.brand_id::text,
                  'authorId', c.author_id,
                  'authorName', c.author_name,
                  'content', c.content,
@@ -69,8 +75,8 @@ export async function getBrandById(id: string): Promise<BrandWithDetail | null> 
                FROM brand_comments c WHERE c.brand_id = b.id),
               '[]'::json
             ) AS "comments"
-     FROM brands b
-     LEFT JOIN brand_nodes n ON n.id = b.node_id
+     FROM brand_nodes b
+     LEFT JOIN style_nodes n ON n.id = b.primary_style_node_id
      WHERE b.id = $1`,
     [id]
   );
@@ -84,8 +90,8 @@ async function getBrandWithNodeKeywords(
 ): Promise<BrandWithNodeKeywords> {
   const res = await pool.query(
     `SELECT ${BRAND_COLS}, ${NODE_JSON}, ${KEYWORDS_JSON}
-     FROM brands b
-     LEFT JOIN brand_nodes n ON n.id = b.node_id
+     FROM brand_nodes b
+     LEFT JOIN style_nodes n ON n.id = b.primary_style_node_id
      WHERE b.id = $1`,
     [id]
   );
@@ -106,10 +112,17 @@ export async function createBrand({
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // brand_nodes.id is a plain bigint PK (ids come from public; no wiki sequence).
+    // Allocate the next id with a row lock to avoid races. brand_name_normalized is
+    // NOT NULL in the mirror -> derive a lowercased/trimmed normalized form.
     const inserted = await client.query<{ id: string }>(
-      `INSERT INTO brands (name, instagram_handle, node_id)
-       VALUES ($1, $2, $3)
-       RETURNING id`,
+      `INSERT INTO brand_nodes (id, brand_name, brand_name_normalized,
+                                instagram_handle, primary_style_node_id, updated_at)
+       VALUES (
+         (SELECT COALESCE(MAX(id), 0) + 1 FROM brand_nodes),
+         $1, lower(trim($1)), $2, $3::bigint, now()
+       )
+       RETURNING id::text AS id`,
       [name, instagramHandle ?? null, nodeId]
     );
     const newId = inserted.rows[0].id;
@@ -118,7 +131,7 @@ export async function createBrand({
     if (kws.length > 0) {
       await client.query(
         `INSERT INTO brand_keywords (brand_id, keyword)
-         SELECT $1, kw FROM unnest($2::text[]) AS kw`,
+         SELECT $1::bigint, kw FROM unnest($2::text[]) AS kw`,
         [newId, kws]
       );
     }
@@ -156,18 +169,20 @@ export async function updateBrand(
       if (keywords.length > 0) {
         await client.query(
           `INSERT INTO brand_keywords (brand_id, keyword)
-           SELECT $1, kw FROM unnest($2::text[]) AS kw`,
+           SELECT $1::bigint, kw FROM unnest($2::text[]) AS kw`,
           [id, keywords]
         );
       }
     }
 
-    // Build conditional SET clause matching Prisma's spread-conditional update.
+    // Build conditional SET clause.
     const sets: string[] = [];
     const vals: unknown[] = [];
     let i = 1;
     if (name) {
-      sets.push(`name = $${i++}`);
+      sets.push(`brand_name = $${i++}`);
+      vals.push(name);
+      sets.push(`brand_name_normalized = lower(trim($${i++}))`);
       vals.push(name);
     }
     if (instagramHandle !== undefined) {
@@ -175,15 +190,15 @@ export async function updateBrand(
       vals.push(instagramHandle);
     }
     if (nodeId !== undefined) {
-      sets.push(`node_id = $${i++}`);
+      sets.push(`primary_style_node_id = $${i++}::bigint`);
       vals.push(nodeId);
     }
-    // Prisma @updatedAt: always bump updated_at on update.
+    // Always bump updated_at on update.
     sets.push(`updated_at = now()`);
 
     vals.push(id);
     await client.query(
-      `UPDATE brands SET ${sets.join(", ")} WHERE id = $${i}`,
+      `UPDATE brand_nodes SET ${sets.join(", ")} WHERE id = $${i}`,
       vals
     );
 
@@ -198,13 +213,14 @@ export async function updateBrand(
 }
 
 export async function deleteBrand(id: string): Promise<void> {
-  await pool.query(`DELETE FROM brands WHERE id = $1`, [id]);
+  await pool.query(`DELETE FROM brand_nodes WHERE id = $1`, [id]);
 }
 
 export async function checkDuplicate(name: string): Promise<boolean> {
-  const res = await pool.query(`SELECT 1 FROM brands WHERE name = $1 LIMIT 1`, [
-    name,
-  ]);
+  const res = await pool.query(
+    `SELECT 1 FROM brand_nodes WHERE brand_name = $1 LIMIT 1`,
+    [name]
+  );
   return res.rows.length > 0;
 }
 
@@ -214,7 +230,7 @@ export async function checkDuplicateExcept(
   exceptId: string
 ): Promise<boolean> {
   const res = await pool.query(
-    `SELECT 1 FROM brands WHERE name = $1 AND id <> $2 LIMIT 1`,
+    `SELECT 1 FROM brand_nodes WHERE brand_name = $1 AND id <> $2 LIMIT 1`,
     [name, exceptId]
   );
   return res.rows.length > 0;
@@ -224,7 +240,7 @@ export async function findBrandNameForSlug(
   id: string
 ): Promise<string | null> {
   const res = await pool.query<{ name: string }>(
-    `SELECT name FROM brands WHERE id = $1`,
+    `SELECT brand_name AS name FROM brand_nodes WHERE id = $1`,
     [id]
   );
   return res.rows[0]?.name ?? null;
@@ -245,7 +261,7 @@ export async function updateBrandInstagram(
   }
 ): Promise<BrandWithNodeKeywords> {
   await pool.query(
-    `UPDATE brands
+    `UPDATE brand_nodes
      SET instagram_handle = $1,
          instagram_url    = $2,
          thumbnail_url    = $3,
@@ -257,5 +273,5 @@ export async function updateBrandInstagram(
   return await getBrandWithNodeKeywords(id);
 }
 
-// Re-export Brand for callers that only need the flat shape.
-export type { Brand, BrandWithNode };
+// Re-export brand types for callers that only need the flat shapes.
+export type { BrandNode, BrandWithNode };

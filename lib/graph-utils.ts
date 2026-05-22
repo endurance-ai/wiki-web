@@ -1,8 +1,8 @@
 import type {
-  BrandNode,
+  StyleNode,
   BrandWithNode,
   BrandRelation,
-  NodeRelation,
+  StyleNodeAdjacency,
 } from "@/lib/types";
 
 export interface GraphNode {
@@ -30,11 +30,18 @@ export interface GraphData {
   links: GraphLink[];
 }
 
+// Builds the GraphData wire shape consumed unchanged by GraphCanvas:
+//   - style cluster -> {type:'cluster', name=name_ko, color, val:20}
+//   - brand        -> {type:'brand', name=brand_name, color=parent cluster color,
+//                       nodeId=primary_style_node_id (string), axisX/Y from x/y_position, val:8}
+//   - cluster-member links from each brand's nodeId
+//   - brand-relation links from brand_relations
+//   - node-relation links from style_node_adjacency
 export function buildGraphData(
-  clusterNodes: BrandNode[],
+  clusterNodes: StyleNode[],
   brands: BrandWithNode[],
   brandRelations: BrandRelation[],
-  nodeRelations: NodeRelation[]
+  nodeRelations: StyleNodeAdjacency[]
 ): GraphData {
   const nodes: GraphNode[] = [
     ...clusterNodes.map((n) => ({
@@ -71,14 +78,14 @@ export function buildGraphData(
     ...brandRelations.map((r) => ({
       source: r.brandIdA,
       target: r.brandIdB,
-      strength: r.strength,
+      strength: Number(r.strength),
       type: "brand-relation" as const,
     })),
-    // cluster ↔ cluster relations
+    // cluster ↔ cluster relations (style_node_adjacency; weight is numeric → coerce)
     ...nodeRelations.map((r) => ({
-      source: r.nodeIdA,
-      target: r.nodeIdB,
-      strength: r.strength,
+      source: r.fromId,
+      target: r.toId,
+      strength: Number(r.weight),
       type: "node-relation" as const,
     })),
   ];

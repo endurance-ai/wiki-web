@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ApifyClient } from "apify-client";
 import { findBrandNameForSlug, updateBrandInstagram } from "@/lib/repositories/brands";
 import { downloadFeedImages } from "@/lib/image-storage";
-import { RefreshInstagramSchema, isUuid } from "@/lib/validation";
+import { RefreshInstagramSchema, isBigintId } from "@/lib/validation";
 import { writesDisabled } from "@/lib/write-guard";
 
 export async function POST(
@@ -12,7 +12,7 @@ export async function POST(
   const blocked = writesDisabled(); if (blocked) return blocked;
 
   const { id } = await params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   let body: unknown;
   try {

@@ -1,18 +1,24 @@
 import "server-only";
 import { pool } from "@/lib/db";
-import type { BrandNode } from "@/lib/types";
+import type { StyleNode } from "@/lib/types";
 
-export async function listNodes(): Promise<BrandNode[]> {
-  const res = await pool.query<BrandNode>(`
-    SELECT id,
-           name,
-           description,
+// Lists style clusters (wiki.style_nodes). `name` is aliased from name_ko so
+// clusterLabel() keeps working; `description` is mapped from mood for the legacy
+// ClusterNode shape the panel reads. id cast to text (bigint -> string).
+export async function listNodes(): Promise<StyleNode[]> {
+  const res = await pool.query<StyleNode>(`
+    SELECT id::text     AS id,
+           code,
+           name_ko      AS name,
+           name_en      AS "nameEn",
            color,
+           mood,
+           mood         AS description,
+           is_active    AS "isActive",
            created_at   AS "createdAt",
-           axis_x_label AS "axisXLabel",
-           axis_y_label AS "axisYLabel"
-    FROM brand_nodes
-    ORDER BY created_at ASC
+           updated_at   AS "updatedAt"
+    FROM style_nodes
+    ORDER BY id ASC
   `);
   return res.rows;
 }

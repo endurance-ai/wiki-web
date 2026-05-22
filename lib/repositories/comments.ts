@@ -2,13 +2,15 @@ import "server-only";
 import { pool } from "@/lib/db";
 import type { BrandComment } from "@/lib/types";
 
+// brand_comments.brand_id is bigint now (FK -> wiki.brand_nodes). Comment id stays
+// uuid. brand_id cast ::text so the wire shape matches the string-id frontend.
 const COMMENT_COLS = `
   id,
-  brand_id    AS "brandId",
-  author_id   AS "authorId",
-  author_name AS "authorName",
+  brand_id::text AS "brandId",
+  author_id      AS "authorId",
+  author_name    AS "authorName",
   content,
-  created_at  AS "createdAt"
+  created_at     AS "createdAt"
 `;
 
 export async function listComments(brandId: string): Promise<BrandComment[]> {
@@ -28,7 +30,7 @@ export async function createComment(
 ): Promise<BrandComment> {
   const res = await pool.query<BrandComment>(
     `INSERT INTO brand_comments (brand_id, content, author_name)
-     VALUES ($1, $2, $3)
+     VALUES ($1::bigint, $2, $3)
      RETURNING ${COMMENT_COLS}`,
     [brandId, content, authorName ?? null]
   );

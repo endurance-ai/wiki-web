@@ -1,29 +1,39 @@
-// Plain TS row interfaces mirroring the wiki-schema tables.
-// Field names are camelCase (SQL queries alias snake_case columns) so existing
-// consumers (graph-utils, components, store) keep working unchanged after the
-// Prisma -> pg migration. Mirrors the shape Prisma previously returned.
+// Plain TS row interfaces mirroring the realigned wiki-schema tables (002 migration).
+// The wiki schema now mirrors `public`: style_nodes = style clusters, brand_nodes =
+// brands. bigint ids are converted to strings in the repositories (SQL `::text`)
+// because the frontend / force-graph use string ids throughout. Field names are
+// camelCase, aliased from snake_case columns in the SQL, so the JSON wire shape the
+// frontend reads stays as close as possible to the pre-migration shape.
 
-export interface BrandNode {
+// Style cluster (was BrandNode/cluster). Mirrors wiki.style_nodes.
+// `name` is aliased from name_ko so lib/cluster-labels.clusterLabel keeps working.
+export interface StyleNode {
   id: string;
-  name: string;
-  description: string | null;
+  code: string;
+  name: string; // <- name_ko (clusterLabel expects the Korean cluster name)
+  nameEn: string;
   color: string | null;
+  mood: string | null;
+  isActive: boolean;
   createdAt: Date;
-  axisXLabel: string | null;
-  axisYLabel: string | null;
+  updatedAt: Date;
+  // Legacy alias kept for existing consumers (BottomPanel ClusterNode.description?).
+  description: string | null; // <- always mapped from mood
 }
 
-export interface Brand {
+// Brand (was Brand). Mirrors wiki.brand_nodes. `name` aliased from brand_name,
+// `nodeId` from primary_style_node_id (both as strings).
+export interface BrandNode {
   id: string;
-  name: string;
+  name: string; // <- brand_name
   instagramHandle: string | null;
+  instagramUrl: string | null;
   thumbnailUrl: string | null;
-  nodeId: string | null;
+  nodeId: string | null; // <- primary_style_node_id (as string)
   xPosition: number | null;
   yPosition: number | null;
   createdAt: Date;
   updatedAt: Date;
-  instagramUrl: string | null;
   feedThumbnails: string[];
 }
 
@@ -41,11 +51,11 @@ export interface BrandRelation {
   relationType: string | null;
 }
 
-export interface NodeRelation {
-  id: string;
-  nodeIdA: string;
-  nodeIdB: string;
-  strength: number;
+export interface StyleNodeAdjacency {
+  fromId: string;
+  toId: string;
+  weight: number;
+  source: string;
 }
 
 export interface BrandComment {
@@ -57,16 +67,17 @@ export interface BrandComment {
   createdAt: Date;
 }
 
-// Composite shapes that match Prisma `include` results consumed by routes.
-export type BrandWithNode = Brand & { node: BrandNode | null };
+// Composite shapes consumed by routes (the `node` member is the brand's primary
+// style cluster, matching the pre-migration `node` include).
+export type BrandWithNode = BrandNode & { node: StyleNode | null };
 
-export type BrandWithNodeKeywords = Brand & {
-  node: BrandNode | null;
+export type BrandWithNodeKeywords = BrandNode & {
+  node: StyleNode | null;
   keywords: BrandKeyword[];
 };
 
-export type BrandWithDetail = Brand & {
-  node: BrandNode | null;
+export type BrandWithDetail = BrandNode & {
+  node: StyleNode | null;
   keywords: BrandKeyword[];
   comments: BrandComment[];
 };

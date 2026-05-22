@@ -5,11 +5,20 @@ import { z } from "zod";
 //   input never reaches the pg repositories (guards against unhandled 500s and
 //   storage-bomb payloads). Route [id] params are checked with isUuid().
 
-// UUID v-agnostic check used for [id] route params (brand id, comment id, nodeId).
+// UUID check, still used for comment id route params (brand_comments.id is uuid).
 const uuid = z.string().uuid();
 
 export function isUuid(value: unknown): value is string {
   return uuid.safeParse(value).success;
+}
+
+// After the 002 realign, brand (brand_nodes) and style cluster (style_nodes) ids are
+// bigint, serialized as numeric strings (e.g. "1843"). [id] route params for brands
+// and the nodeId field must be validated as positive integer strings, NOT uuids.
+const bigintId = z.string().regex(/^\d+$/);
+
+export function isBigintId(value: unknown): value is string {
+  return bigintId.safeParse(value).success;
 }
 
 const keyword = z.string().trim().min(1).max(100);
@@ -17,7 +26,7 @@ const keyword = z.string().trim().min(1).max(100);
 // POST /api/brands
 export const BrandCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  nodeId: z.string().uuid(),
+  nodeId: bigintId,
   instagramHandle: z.string().trim().max(100).optional(),
   keywords: z.array(keyword).max(50).optional(),
 });
@@ -25,7 +34,7 @@ export const BrandCreateSchema = z.object({
 // PUT /api/brands/[id] — partial update; all fields optional but typed when present.
 export const BrandUpdateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
-  nodeId: z.string().uuid().optional(),
+  nodeId: bigintId.optional(),
   instagramHandle: z.string().trim().max(100).nullable().optional(),
   keywords: z.array(keyword).max(50).optional(),
 });
