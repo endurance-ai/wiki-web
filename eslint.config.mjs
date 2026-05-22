@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone Node CommonJS data-utility scripts — not part of the Next app build,
+    // intentionally use require(); excluded from the app's TS/Next lint rules.
+    "scripts/**",
   ]),
 ]);
 

@@ -21,12 +21,12 @@ const ALLOWED_EXACT_HOSTS = new Set<string>([
 function isAllowedHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (ALLOWED_EXACT_HOSTS.has(host)) return true;
-  // Instagram CDN families. `scontent.*` covers scontent.cdninstagram.com,
-  // scontent-xxx-1.cdninstagram.com, scontent.fxxx-1.fna.fbcdn.net, etc.
+  // Instagram CDN families. 모든 정상 scontent 호스트는
+  // scontent[-x].cdninstagram.com / scontent.f….fbcdn.net 형태라 아래 suffix 로 커버된다.
+  // (이전의 startsWith("scontent-") 분기는 scontent-evil.com 같은 임의 도메인을 통과시켜 제거)
   if (host.endsWith(".cdninstagram.com")) return true;
   if (host.endsWith(".fbcdn.net")) return true;
   if (host === "instagram.com" || host.endsWith(".instagram.com")) return true;
-  if (host.startsWith("scontent.") || host.startsWith("scontent-")) return true;
   return false;
 }
 

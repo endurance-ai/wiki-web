@@ -399,8 +399,8 @@ export default function GraphCanvas() {
         onNodeHover={(n: unknown) => setHoveredId(n ? (n as FGNode).id : null)}
         onNodeClick={(n: unknown) => {
           const node = n as FGNode;
-          // 브랜드 노드 id 는 "b" 접두사가 붙어 있으므로 떼고 raw id 를 넘긴다.
-          if (node?.type === "brand") useUIStore.getState().setFocusedBrandId(node.id.replace(/^b/, ""));
+          // 브랜드 노드 id 는 "b" 접두사가 붙어 있으므로 떼고 raw id 를 넘긴다 (항상 b<digits>).
+          if (node?.type === "brand") useUIStore.getState().setFocusedBrandId(node.id.slice(1));
           else if (node?.type === "cluster") useUIStore.getState().setSelectedClusterId(node.id);
         }}
         onEngineStop={() => {

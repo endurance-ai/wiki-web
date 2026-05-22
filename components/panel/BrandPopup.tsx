@@ -38,6 +38,7 @@ export default function BrandPopup() {
   // Fetch full brand details when id changes
   useEffect(() => {
     if (!focusedBrandId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 의도된 리셋: 선택 해제 시 상세 비움
       setBrand(null);
       return;
     }

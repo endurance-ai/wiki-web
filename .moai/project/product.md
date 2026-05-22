@@ -9,7 +9,7 @@
 
 ## One-Line Description
 
-kikoweb is a fashion brand node wiki that renders a force-directed graph of 15 style clusters containing ~1079 brand cards, letting users explore brand relationships and — in the next phase — collectively build the brand database.
+kikoweb is a fashion brand node wiki that renders a force-directed graph of 20 style clusters containing ~2899 brand cards, letting users explore brand relationships and — in the next phase — collectively build the brand database.
 
 ---
 
@@ -27,10 +27,10 @@ kikoweb is a fashion brand node wiki that renders a force-directed graph of 15 s
 ### Graph Visualization
 
 - Force-directed canvas graph (`react-force-graph-2d` + custom `d3-force`) rendered at 70 vh
-- 15 style cluster nodes ("brand nodes") with micro-coordinate positioning
-- ~1079 brand cards floating as Instagram-thumbnail circles, clustered by `(xPosition, yPosition)`
-- Per-cluster clockwise rotation animation (2-phase d3 simulation: settle then rotate)
-- 3 link types rendered on canvas: `cluster-member` (brand → node), `brand-relation` (brand ↔ brand), `node-relation` (node ↔ node)
+- 20 style cluster nodes (`wiki.style_nodes`) with deterministic ring layout
+- ~2899 brand cards (`wiki.brand_nodes`) floating as Instagram-thumbnail circles, UMAP-coordinate positions normalised per cluster
+- Per-cluster clockwise rotation animation (single-phase deterministic d3 sim: place then rotate immediately)
+- 3 link types rendered on canvas: `cluster-member` (brand → style node), `brand-relation` (brand ↔ brand), `node-relation` (style node ↔ style node via `style_node_adjacency`)
 
 ### Brand Detail Popup
 
@@ -41,7 +41,7 @@ kikoweb is a fashion brand node wiki that renders a force-directed graph of 15 s
 
 - Apify actor scrapes Instagram profiles on demand (`/api/brands/[id]/refresh-instagram`)
 - Images downloaded from Instagram CDN to `public/feed-images/{slug}/` (permanent local storage via `lib/image-storage.ts`)
-- DB stores local `/feed-images/...` paths in `Brand.feedThumbnails[]`
+- DB stores local `/feed-images/...` paths in `brand_nodes.feed_thumbnails[]`
 
 ### Comments
 
@@ -63,9 +63,9 @@ kikoweb is a fashion brand node wiki that renders a force-directed graph of 15 s
 |----------|-------|----------------|
 | Explore style clusters visually | End user | Yes |
 | Open a brand and see its Instagram feed | End user | Yes |
-| Read / write comments on a brand | End user | Read: Yes / Write: Yes (unauthenticated — debt) |
-| Add or edit a brand | Team curator | Yes via API (unauthenticated — debt) |
-| Refresh Instagram thumbnails | Team curator | Yes via API (cost-unrestricted — debt) |
+| Read / write comments on a brand | End user | Read: Yes / Write: **No (403 — view-only phase; `WIKI_WRITE_ENABLED` gate)** |
+| Add or edit a brand | Team curator | **No (403 — write-guard disabled in view-only phase)** |
+| Refresh Instagram thumbnails | Team curator | **No (403 — write-guard disabled in view-only phase)** |
 | Switch UI language EN ↔ KR | Any user | Yes |
 | Query kikoai recommendation graph from wiki | System integration | Future phase |
 
@@ -75,11 +75,11 @@ kikoweb is a fashion brand node wiki that renders a force-directed graph of 15 s
 
 The near-term evolution from read-only viewer to collaborative wiki:
 
-1. **Auth hardening** — configure next-auth, lock all write/delete/refresh routes behind session
+1. **Auth hardening** — configure next-auth, replace `WIKI_WRITE_ENABLED` write-guard with session-based auth to re-enable writes for authenticated users
 2. **User-contributed brands** — authenticated POST `/api/brands/` flow with duplicate check (`/api/brands/check-dup/`)
-3. **Keyword + relation editing** — UI for adding/removing `BrandKeyword` and `BrandRelation` records
+3. **Keyword + relation editing** — UI for adding/removing `brand_keywords` and `brand_relations` records
 4. **Moderated comments** — author attribution via session, admin delete
-5. **Cross-schema integration** — link `wiki.brand_nodes` into kikoai's production brand graph (separate from `public`/`ai` schemas — requires coordination with kikoai team)
+5. **Cross-schema integration** — `wiki.brand_nodes` already mirrors `public.brand_nodes` (ids are identical); deeper integration (write-back, live sync) requires explicit coordination with kikoai team
 6. **Public launch** — deploy to production domain (currently dev-only on Vercel + dev-app EC2)
 
 ---

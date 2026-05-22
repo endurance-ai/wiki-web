@@ -15,7 +15,8 @@ export function isUuid(value: unknown): value is string {
 // After the 002 realign, brand (brand_nodes) and style cluster (style_nodes) ids are
 // bigint, serialized as numeric strings (e.g. "1843"). [id] route params for brands
 // and the nodeId field must be validated as positive integer strings, NOT uuids.
-const bigintId = z.string().regex(/^\d+$/);
+// 양의 bigint 문자열만 (0 / 선행 0 / 19자리 초과 거부) → 거대 입력으로 인한 bigint overflow 500 방지.
+const bigintId = z.string().regex(/^[1-9]\d{0,18}$/);
 
 export function isBigintId(value: unknown): value is string {
   return bigintId.safeParse(value).success;

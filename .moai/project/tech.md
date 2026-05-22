@@ -2,7 +2,7 @@
 
 > Created: 2026-05-22 | Status: Active Development
 > Purpose: Technology stack reference for developers, agents, and the hardening/refactor pass
-> Verified against: package.json, lib/db.ts, lib/repositories/, lib/types.ts, next.config.ts (2026-05-22 refactor)
+> Verified against: package.json, lib/db.ts, lib/repositories/, lib/types.ts, next.config.ts, proxy.ts, lib/write-guard.ts, database/migrations/002_align_to_public_and_merge.sql (feature/mig branch)
 
 ---
 
@@ -19,6 +19,7 @@
 | State management | Zustand | 5.0.13 | `lib/store.ts` — UI-only state |
 | Graph visualization | react-force-graph-2d | 1.29.1 | Canvas-based; custom d3-force simulation |
 | DB driver | pg | ^8.20.0 | PostgreSQL wire protocol; `pg.Pool` singleton in `lib/db.ts` |
+| Validation | zod | ^4.4.3 | Request-body schemas in `lib/validation.ts`; all mutating routes use `safeParse` |
 | Auth | next-auth | 5.0.0-beta.31 | Installed but NOT configured (placeholder) |
 | Instagram ingestion | apify-client | 2.23.2 | Active scraping path |
 
@@ -60,7 +61,7 @@ Domain query functions are in `lib/repositories/`:
 | `lib/repositories/brands.ts` | Brand CRUD — list, get with detail, create, update, delete |
 | `lib/repositories/comments.ts` | Comment list, create, delete |
 
-Row shapes are plain TypeScript interfaces in `lib/types.ts` (camelCase; SQL aliases map snake_case columns). Composite types (`BrandWithDetail`, `BrandWithNodeKeywords`) match the shapes previously returned by Prisma `include`, so existing consumers (routes, `graph-utils`) required no changes.
+Row shapes are plain TypeScript interfaces in `lib/types.ts` (camelCase; SQL aliases map snake_case columns). Key rename after the 002 migration: `StyleNode` (was BrandNode/cluster) and `BrandNode` (was Brand). Composite types (`BrandWithDetail`, `BrandWithNodeKeywords`) preserve the wire shape so existing consumers (routes, `graph-utils`) required no changes. bigint ids are cast `::text` in all repository queries so the frontend receives string ids.
 
 ---
 
@@ -89,7 +90,9 @@ Dev server port is **3500** (set in `package.json` scripts: `"next dev -p 3500"`
 | Key | Purpose |
 |-----|---------|
 | `DATABASE_URL` | Postgres connection string → dev-app wiki schema (see Database section) |
-| `DATABASE_URL_SUPABASE_BACKUP` | Retained backup pointing to decommissioned Supabase instance |
+| `DATABASE_URL_SUPABASE_BACKUP` | Retained backup pointing to decommissioned Supabase instance (can be removed) |
+| `DATABASE_CA_CERT` | Optional path to a PEM CA cert; when set, enables full TLS verification (`rejectUnauthorized: true`) instead of the dev fallback |
+| `WIKI_WRITE_ENABLED` | Set to `"true"` to enable mutating API routes (write-guard in `lib/write-guard.ts`); unset = view-only mode (403 on all writes) |
 | `APIFY_API_TOKEN` | Apify actor authentication for Instagram scraping |
 | `NEXTAUTH_SECRET` | next-auth signing secret (required even in unconfigured state) |
 | `NEXTAUTH_URL` | Base URL for next-auth callbacks |
@@ -117,22 +120,27 @@ postgresql://app_user:<password>@54.116.104.193:5432/kikoai?schema=wiki
 
 ### Schema Management
 
-Schema is managed with **raw SQL migrations** under `database/migrations/`. The baseline file `database/migrations/001_init_wiki_schema.sql` captures the complete wiki schema (format: numbered filename + header comment + `BEGIN; … COMMIT;`). Future schema changes add numbered migration files (`002_...`, `003_...`), matching the convention in the `app` repo.
+Schema is managed with **raw SQL migrations** under `database/migrations/`. Format: numbered filename + header comment + `BEGIN; … COMMIT;`, matching the convention in the `app` repo.
+
+| Migration | Purpose |
+|-----------|---------|
+| `001_init_wiki_schema.sql` | Baseline schema (originally from Prisma db push; idempotent, safe to re-run) |
+| `002_align_to_public_and_merge.sql` | Realigns naming to mirror `public` schema; drops old tables; imports ~2899 brands + 20 style clusters from `public`; derives ~26,366 keyword rows from `attributes` jsonb |
 
 There is no migration history table yet — migrations are applied manually. A migration runner should be adopted before any production promotion.
 
-### Data State (2026-05-22)
+### Data State (post-002 migration)
 
-Data was migrated from a now-decommissioned Supabase Postgres instance into the `wiki` schema via `scripts/migrate_to_local.js`. Current row counts:
+Data sourced from `public.brand_nodes` + `public.style_nodes` (cross-schema INSERT … SELECT). Old Supabase-seeded data was discarded. Current row counts:
 
-| Table | Rows |
-|-------|------|
-| `wiki.brand_nodes` | 15 |
-| `wiki.brands` | 1079 |
-| `wiki.brand_keywords` | 3495 |
-| `wiki.brand_relations` | 0 |
-| `wiki.node_relations` | 0 |
-| `wiki.brand_comments` | 0 |
+| Table | Rows | Notes |
+|-------|------|-------|
+| `wiki.style_nodes` | 20 | Mirrors public.style_nodes |
+| `wiki.brand_nodes` | ~2899 | Mirrors public.brand_nodes |
+| `wiki.brand_keywords` | ~26,366 | Derived from attributes jsonb |
+| `wiki.brand_relations` | 0 | Filled by compute_relations.js |
+| `wiki.style_node_adjacency` | 0 | Cluster-to-cluster edges |
+| `wiki.brand_comments` | 0 | |
 
 ---
 
@@ -167,14 +175,16 @@ npm run lint     # ESLint 9 (flat config)
 
 ### Security (Priority: High)
 
-| Issue | Location | Impact |
-|-------|----------|--------|
-| All write/delete API routes unauthenticated | `app/api/brands/`, `app/api/comments/` | Any user can create, modify, or delete any brand or comment |
-| `refresh-instagram` unauthenticated | `app/api/brands/[id]/refresh-instagram/` | Triggers paid Apify actor runs with no access control; cost-abuse vector |
-| SSRF in `/api/proxy-image` | `app/api/proxy-image/` | No domain allowlist; can be abused to probe internal network endpoints |
-| No rate limiting | All API routes | Open to brute force and DoS on write endpoints |
-| `next-auth` installed but not configured | No `app/api/auth/` route, no middleware, no session usage | Auth is a no-op despite the package being present |
-| `ssl.rejectUnauthorized: false` | `lib/db.ts` | Disables TLS certificate verification; acceptable for dev, not for production |
+| Issue | Location | Status / Mitigation |
+|-------|----------|---------------------|
+| All write/delete API routes unauthenticated | `app/api/brands/`, `app/api/comments/` | **Mitigated (view-only)**: `lib/write-guard.ts` returns 403 on all mutating routes unless `WIKI_WRITE_ENABLED=true`. Auth (next-auth) must be wired before writes can be re-enabled. |
+| `refresh-instagram` unauthenticated + cost-abuse | `app/api/brands/[id]/refresh-instagram/` | **Mitigated (view-only + rate limit)**: write-guard blocks the route; `proxy.ts` enforces 2 req/min per IP even if guard were lifted. |
+| SSRF in `/api/proxy-image` | `app/api/proxy-image/` | **Mitigated**: `lib/url-guard.ts` enforces Instagram/Facebook CDN allowlist + DNS rebinding check + `redirect: "manual"`; `Access-Control-Allow-Origin: *` removed. |
+| No rate limiting | All API routes | **Mitigated**: `proxy.ts` (Next.js 16 middleware renamed from `middleware.ts`) applies per-IP sliding-window limits (60 req/min general, 2 req/min for refresh). In-memory only — must move to Redis/Upstash for multi-instance. |
+| No input validation | Mutating API routes | **Mitigated**: `lib/validation.ts` (Zod v4) validates all request bodies; `isBigintId()` / `isUuid()` guard route params. |
+| `next-auth` installed but not configured | No session usage | **Open**: Auth is a no-op. Required before enabling writes for end users. |
+| `ssl.rejectUnauthorized: false` | `lib/db.ts` | **Open (dev only)**: set `DATABASE_CA_CERT` for cert-verified TLS; acceptable for dev, not for production. |
+| Security headers missing | HTTP responses | **Mitigated**: `next.config.ts` adds CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`. |
 
 ### Maintainability
 
@@ -188,6 +198,7 @@ npm run lint     # ESLint 9 (flat config)
 
 | Issue | Notes |
 |-------|-------|
-| `brand_relations` and `node_relations` are empty | The graph's relation link types are defined but not populated; `compute_relations.js` script not yet run on production data |
+| `brand_relations` and `style_node_adjacency` are empty | The graph's relation link types are defined but not populated; `compute_relations.js` script not yet run on the new dataset |
 | `public/feed-images/` is a local disk store | Not compatible with multi-instance or serverless deployment without migration to object storage |
-| Cross-schema integration (wiki ↔ kikoai production) | Planned future phase; requires explicit coordination to avoid touching `public`/`ai` schemas |
+| Cross-schema integration (wiki ↔ kikoai production) | `wiki.brand_nodes` already mirrors `public.brand_nodes` (ids identical). Deeper integration (live sync, write-back) is a future phase — requires explicit coordination to avoid touching `public`/`ai` schemas |
+| Instagram thumbnails not yet re-fetched | 002 migration imported brands with null `thumbnail_url`/`feed_thumbnails`; Apify refresh pipeline will repopulate when writes are re-enabled |

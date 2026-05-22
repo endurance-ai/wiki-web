@@ -34,6 +34,7 @@ export default function GetYourCat() {
 
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 의도된 리셋: 모달 닫힐 때 폼 초기화
       setSent(false);
       setPhone("");
       setChannel("imessage");
