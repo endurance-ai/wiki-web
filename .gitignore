@@ -46,3 +46,10 @@ next-env.d.ts
 
 # Downloaded Instagram feed images (large, regenerable)
 /public/feed-images/
+
+# MoAI-ADK runtime artifacts
+.moai/cache/
+.moai/logs/
+.moai/reports/
+.moai/state/
+.claude/agent-memory/
