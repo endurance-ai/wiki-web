@@ -1,0 +1,87 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model BrandNode {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String         @unique @db.VarChar(100)
+  description    String?
+  color          String?        @db.VarChar(7)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  axisXLabel     String?        @map("axis_x_label") @db.VarChar(100)
+  axisYLabel     String?        @map("axis_y_label") @db.VarChar(100)
+  brands         Brand[]
+  nodeRelationsA NodeRelation[] @relation("NodeRelationA")
+  nodeRelationsB NodeRelation[] @relation("NodeRelationB")
+
+  @@map("brand_nodes")
+}
+
+model Brand {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String          @unique @db.VarChar(100)
+  instagramHandle String?         @map("instagram_handle") @db.VarChar(100)
+  thumbnailUrl    String?         @map("thumbnail_url")
+  nodeId          String?         @map("node_id") @db.Uuid
+  xPosition       Float?          @map("x_position")
+  yPosition       Float?          @map("y_position")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  instagramUrl    String?         @map("instagram_url")
+  feedThumbnails  String[]        @map("feed_thumbnails")
+  comments        BrandComment[]
+  keywords        BrandKeyword[]
+  relationsA      BrandRelation[] @relation("BrandRelationA")
+  relationsB      BrandRelation[] @relation("BrandRelationB")
+  node            BrandNode?      @relation(fields: [nodeId], references: [id])
+
+  @@map("brands")
+}
+
+model BrandKeyword {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  brandId String @map("brand_id") @db.Uuid
+  keyword String @db.VarChar(100)
+  brand   Brand  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@map("brand_keywords")
+}
+
+model BrandRelation {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  brandIdA     String  @map("brand_id_a") @db.Uuid
+  brandIdB     String  @map("brand_id_b") @db.Uuid
+  strength     Float   @default(1.0)
+  relationType String? @map("relation_type") @db.VarChar(50)
+  brandA       Brand   @relation("BrandRelationA", fields: [brandIdA], references: [id], onDelete: Cascade)
+  brandB       Brand   @relation("BrandRelationB", fields: [brandIdB], references: [id], onDelete: Cascade)
+
+  @@map("brand_relations")
+}
+
+model NodeRelation {
+  id       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nodeIdA  String    @map("node_id_a") @db.Uuid
+  nodeIdB  String    @map("node_id_b") @db.Uuid
+  strength Float     @default(1.0)
+  nodeA    BrandNode @relation("NodeRelationA", fields: [nodeIdA], references: [id])
+  nodeB    BrandNode @relation("NodeRelationB", fields: [nodeIdB], references: [id])
+
+  @@map("node_relations")
+}
+
+model BrandComment {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  brandId    String   @map("brand_id") @db.Uuid
+  authorId   String?  @map("author_id") @db.Uuid
+  authorName String?  @map("author_name") @db.VarChar(100)
+  content    String
+  createdAt  DateTime @default(now()) @map("created_at")
+  brand      Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@map("brand_comments")
+}
