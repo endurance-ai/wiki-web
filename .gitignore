@@ -42,8 +42,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-/app/generated/prisma
-
 # Downloaded Instagram feed images (large, regenerable)
 /public/feed-images/
 

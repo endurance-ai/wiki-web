@@ -1,18 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ApifyClient } from "apify-client";
-import { prisma } from "@/lib/db";
+import { findBrandNameForSlug, updateBrandInstagram } from "@/lib/repositories/brands";
 import { downloadFeedImages } from "@/lib/image-storage";
+import { RefreshInstagramSchema, isBigintId } from "@/lib/validation";
+import { writesDisabled } from "@/lib/write-guard";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const { handle } = await req.json();
+  const blocked = writesDisabled(); if (blocked) return blocked;
 
-  if (!handle || typeof handle !== "string") {
-    return NextResponse.json({ error: "handle required" }, { status: 400 });
+  const { id } = await params;
+  if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+
+  const parsed = RefreshInstagramSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { handle } = parsed.data;
 
   // URL이면 핸들 추출 (https://www.instagram.com/alyxstudio/ → alyxstudio)
   let cleanHandle = handle.trim();
@@ -30,8 +46,8 @@ export async function POST(
   }
 
   // 브랜드 이름 (다운로드 폴더 슬러그용)
-  const existing = await prisma.brand.findUnique({ where: { id }, select: { name: true } });
-  if (!existing) {
+  const brandName = await findBrandNameForSlug(id);
+  if (!brandName) {
     return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   }
 
@@ -55,27 +71,23 @@ export async function POST(
       .filter((u): u is string => !!u);
 
     // 인스타 CDN URL은 24~48시간 후 만료 → 즉시 로컬 다운로드해서 영구 보관
-    const { localUrls } = await downloadFeedImages(remoteUrls, existing.name);
+    const { localUrls } = await downloadFeedImages(remoteUrls, brandName);
 
     // 피드가 비어 있으면 프로필 사진을 썸네일로 폴백 (이것도 로컬 저장)
     let thumbnailUrl: string | null = localUrls[0] ?? null;
     if (!thumbnailUrl) {
       const profilePic = (profile.profilePicUrlHD || profile.profilePicUrl) as string | undefined;
       if (profilePic) {
-        const { localUrls: profileLocal } = await downloadFeedImages([profilePic], existing.name);
+        const { localUrls: profileLocal } = await downloadFeedImages([profilePic], brandName);
         thumbnailUrl = profileLocal[0] ?? null;
       }
     }
 
-    const updated = await prisma.brand.update({
-      where: { id },
-      data: {
-        instagramHandle: profile.username as string,
-        instagramUrl: `https://www.instagram.com/${profile.username}/`,
-        thumbnailUrl,
-        feedThumbnails: localUrls,
-      },
-      include: { node: true, keywords: true },
+    const updated = await updateBrandInstagram(id, {
+      instagramHandle: profile.username as string,
+      instagramUrl: `https://www.instagram.com/${profile.username}/`,
+      thumbnailUrl,
+      feedThumbnails: localUrls,
     });
 
     return NextResponse.json({
@@ -86,7 +98,12 @@ export async function POST(
       },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown error";
-    return NextResponse.json({ error: `Apify 오류: ${msg}` }, { status: 502 });
+    // SEC-09: never leak raw upstream (Apify) error text to clients — it can
+    // expose internal structure / token state. Log server-side, return generic.
+    console.error("[refresh-instagram] Apify error:", e);
+    return NextResponse.json(
+      { error: "Instagram 갱신에 실패했습니다" },
+      { status: 502 }
+    );
   }
 }

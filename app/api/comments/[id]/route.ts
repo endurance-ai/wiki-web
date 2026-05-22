@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { deleteComment } from "@/lib/repositories/comments";
+import { isUuid } from "@/lib/validation";
+import { writesDisabled } from "@/lib/write-guard";
 
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const blocked = writesDisabled(); if (blocked) return blocked;
+
   const { id } = await params;
-  await prisma.brandComment.delete({ where: { id } });
+  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  await deleteComment(id);
   return NextResponse.json({ success: true });
 }

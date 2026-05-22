@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { assertSafeRemoteUrl } from "@/lib/url-guard";
 
 const FEED_DIR = path.join(process.cwd(), "public", "feed-images");
 
@@ -25,8 +26,14 @@ export function slugify(name: string): string {
  */
 async function downloadImage(url: string, slug: string, index: number): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    // SSRF guard (SEC-02): even though these URLs come from the Apify Instagram
+    // scraper, treat them as untrusted and only fetch allowlisted CDN hosts.
+    const guard = await assertSafeRemoteUrl(url);
+    if (!guard.ok) return null;
+
+    const res = await fetch(guard.url, {
       headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+      redirect: "manual",
     });
     if (!res.ok) return null;
 

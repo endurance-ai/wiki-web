@@ -1,38 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { createBrand, listBrands, checkDuplicate } from "@/lib/repositories/brands";
+import { BrandCreateSchema } from "@/lib/validation";
+import { writesDisabled } from "@/lib/write-guard";
 
 export async function GET() {
-  const brands = await prisma.brand.findMany({
-    include: { node: true, keywords: true },
-    orderBy: { createdAt: "asc" },
-  });
+  const brands = await listBrands();
   return NextResponse.json(brands);
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { name, instagramHandle, nodeId, keywords } = body;
+  const blocked = writesDisabled(); if (blocked) return blocked;
 
-  if (!name || !nodeId) {
-    return NextResponse.json({ error: "name and nodeId are required" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const existing = await prisma.brand.findUnique({ where: { name } });
-  if (existing) {
+  const parsed = BrandCreateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { name, instagramHandle, nodeId, keywords } = parsed.data;
+
+  const exists = await checkDuplicate(name);
+  if (exists) {
     return NextResponse.json({ error: "이미 등록된 브랜드입니다" }, { status: 409 });
   }
 
-  const brand = await prisma.brand.create({
-    data: {
-      name,
-      instagramHandle,
-      nodeId,
-      keywords: {
-        create: (keywords ?? []).map((k: string) => ({ keyword: k })),
-      },
-    },
-    include: { keywords: true, node: true },
-  });
+  const brand = await createBrand({ name, instagramHandle, nodeId, keywords });
 
   return NextResponse.json(brand, { status: 201 });
 }
