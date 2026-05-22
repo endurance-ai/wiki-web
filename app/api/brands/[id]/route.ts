@@ -5,12 +5,14 @@ import {
   deleteBrand,
   checkDuplicateExcept,
 } from "@/lib/repositories/brands";
+import { BrandUpdateSchema, isUuid } from "@/lib/validation";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const brand = await getBrandById(id);
   if (!brand) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(brand);
@@ -21,8 +23,23 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const body = await req.json();
-  const { name, instagramHandle, nodeId, keywords } = body;
+  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = BrandUpdateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { name, instagramHandle, nodeId, keywords } = parsed.data;
 
   if (name) {
     const conflict = await checkDuplicateExcept(name, id);
@@ -42,6 +59,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   await deleteBrand(id);
   return NextResponse.json({ success: true });
 }

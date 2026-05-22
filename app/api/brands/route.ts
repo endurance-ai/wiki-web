@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createBrand, listBrands, checkDuplicate } from "@/lib/repositories/brands";
+import { BrandCreateSchema } from "@/lib/validation";
 
 export async function GET() {
   const brands = await listBrands();
@@ -7,12 +8,21 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { name, instagramHandle, nodeId, keywords } = body;
-
-  if (!name || !nodeId) {
-    return NextResponse.json({ error: "name and nodeId are required" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+
+  const parsed = BrandCreateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { name, instagramHandle, nodeId, keywords } = parsed.data;
 
   const exists = await checkDuplicate(name);
   if (exists) {

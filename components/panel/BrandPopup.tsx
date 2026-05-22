@@ -5,6 +5,7 @@ import { useUIStore } from "@/lib/store";
 import { clusterLabel } from "@/lib/cluster-labels";
 import { brandDescription } from "@/lib/brand-descriptions";
 import { useT, useTKeyword, useLocale } from "@/lib/i18n";
+import { safeHref } from "@/lib/validation";
 
 interface Keyword { id: string; keyword: string; }
 interface NodeMeta { id: string; name: string; color: string | null; }
@@ -78,8 +79,11 @@ export default function BrandPopup() {
   const src = brand ? thumbSrc(brand.thumbnailUrl) : null;
   const styleLabel = brand?.node ? clusterLabel(brand.node.name, locale) : null;
   const desc = brand ? brandDescription(brand.name) : null;
+  // SEC-07: instagramUrl is user-editable (PUT /api/brands/[id]) — only allow
+  // http/https hrefs so a stored `javascript:`/`data:` URL can't execute on click.
   const igUrl = brand?.instagramHandle
-    ? brand.instagramUrl ?? `https://www.instagram.com/${brand.instagramHandle.replace(/^@/, "")}/`
+    ? safeHref(brand.instagramUrl) ??
+      `https://www.instagram.com/${brand.instagramHandle.replace(/^@/, "")}/`
     : null;
 
   return (

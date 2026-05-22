@@ -1,5 +1,7 @@
 import "server-only";
+import { readFileSync } from "fs";
 import { Pool } from "pg";
+import type { PoolConfig } from "pg";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -30,8 +32,24 @@ function createPool(): Pool {
   url.searchParams.delete("schema");
   const cleaned = url.toString();
 
-  // 기본: SSL 켜고 self-signed 허용. 명시적 disable 만 평문.
-  const ssl = sslmode === "disable" ? false : { rejectUnauthorized: false };
+  // SSL posture (SEC-06):
+  //  - sslmode=disable  → plaintext (explicit opt-out only).
+  //  - DATABASE_CA_CERT set → trust ONLY that CA and verify the cert. This is the
+  //    secure path: distribute the dev-app self-signed CA as a file and point this
+  //    env var at it to get full verification without disabling it globally.
+  //  - otherwise → fall back to the ACCEPTED DEV POSTURE: SSL on but
+  //    rejectUnauthorized:false. This matches the team's `app` repo so the existing
+  //    dev-app self-signed connection keeps working. NOT for production — promote to
+  //    a real CA + rejectUnauthorized:true before going to prod.
+  let ssl: PoolConfig["ssl"];
+  const caPath = process.env.DATABASE_CA_CERT;
+  if (sslmode === "disable") {
+    ssl = false;
+  } else if (caPath) {
+    ssl = { ca: readFileSync(caPath, "utf8"), rejectUnauthorized: true };
+  } else {
+    ssl = { rejectUnauthorized: false };
+  }
 
   // 모든 테이블은 wiki 스키마에 있음 → 미수식 테이블명이 wiki 로 resolve 되도록 search_path 고정.
   return new Pool({

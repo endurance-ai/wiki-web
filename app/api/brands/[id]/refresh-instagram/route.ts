@@ -2,17 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { ApifyClient } from "apify-client";
 import { findBrandNameForSlug, updateBrandInstagram } from "@/lib/repositories/brands";
 import { downloadFeedImages } from "@/lib/image-storage";
+import { RefreshInstagramSchema, isUuid } from "@/lib/validation";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { handle } = await req.json();
+  if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (!handle || typeof handle !== "string") {
-    return NextResponse.json({ error: "handle required" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+
+  const parsed = RefreshInstagramSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const { handle } = parsed.data;
 
   // URL이면 핸들 추출 (https://www.instagram.com/alyxstudio/ → alyxstudio)
   let cleanHandle = handle.trim();
@@ -82,7 +95,12 @@ export async function POST(
       },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown error";
-    return NextResponse.json({ error: `Apify 오류: ${msg}` }, { status: 502 });
+    // SEC-09: never leak raw upstream (Apify) error text to clients — it can
+    // expose internal structure / token state. Log server-side, return generic.
+    console.error("[refresh-instagram] Apify error:", e);
+    return NextResponse.json(
+      { error: "Instagram 갱신에 실패했습니다" },
+      { status: 502 }
+    );
   }
 }
