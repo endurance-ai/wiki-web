@@ -43,8 +43,9 @@ function clusterRadiusMax(memberCount: number): number {
   return Math.max(RADIUS_MIN_R, Math.min(RADIUS_MAX_R, r));
 }
 
-// 단계 1(정적 배치) 유지 시간(ms). 이후 회전 모드로 전환.
-const SETTLE_MS = 5000;
+// 회전은 tick 1 부터 시작(대기 없음). 이 값은 초기 zoomToFit(전체 화면 맞춤) 타이밍에만
+// 쓰인다 — 노드 배치+캔버스 dims 가 준비될 최소 시간만.
+const SETTLE_MS = 250;
 
 interface FGLink {
   source: string | FGNode;
@@ -147,116 +148,72 @@ export default function GraphCanvas() {
       });
     }
 
-    // === 정적 배치 force (1회 적용) ===
-    // 핵심 교훈: 2899개 규모에서 d3 물리(charge/collide/spring)로 브랜드를 클러스터에
-    // "정착"시키면, dense 클러스터(533개)에서 collide 누적이 스프링을 이겨 disk 가 통째로
-    // 수천 px 이탈한다(검증으로 6000~16000px 이탈 확인). 그래서 물리 정착을 포기하고,
-    // 각 노드를 결정론적 좌표에 직접 놓고 fx/fy 로 고정한다. → 드리프트 0.
-    // (state 직접 변형 lint 회피를 위해, 원본과 동일하게 force 콜백 안에서 변형한다.)
+    // === 배치 + 회전을 하나의 force 로 (대기 없음) ===
+    // 결정론적 배치라 물리 정착을 기다릴 이유가 없다 → 첫 tick 에서 즉시 배치하고
+    // 같은 tick 부터 회전. 분류 브랜드는 매 tick "클러스터 중심 + 회전된 base" 에
+    // fx/fy 로 직접 고정 → 드리프트 0, tick 1 부터 바로 빙글빙글.
+    // (graphData 직접 변형 lint 회피 위해 force 콜백 안에서 노드를 변형한다.)
+    const clusterRotation = new Map<string, number>();
+    for (const c of clusterList) clusterRotation.set(c.id, 0);
+    const OMEGA = 0.0012; // rad/tick → 1회전 ≈ 90초
     let placed = false;
-    const staticPlacement = () => {
-      if (placed) return;
-      placed = true;
+    const rotateForce = () => {
+      if (!placed) {
+        placed = true;
+        for (const node of graphData.nodes) {
+          if (node.type === "cluster") {
+            const p = clusterPos.get(node.id);
+            if (p) { node.x = p.x; node.y = p.y; node.fx = p.x; node.fy = p.y; }
+            continue;
+          }
+          if (node.type !== "brand") continue;
+          const cpos = node.nodeId ? clusterPos.get(node.nodeId) : undefined;
+          if (cpos && node.axisX != null && node.axisY != null) {
+            // 분류 브랜드: 회전 base(클러스터 중심 기준 오프셋)만 계산. 실제 위치는 아래 회전 루프가 고정.
+            const rMax = rMaxByCluster.get(node.nodeId!) ?? RADIUS_MIN_R;
+            const mag = Math.hypot(node.axisX, node.axisY);
+            const r = CLUSTER_RADIUS_MIN + (rMax - CLUSTER_RADIUS_MIN) * (mag / Math.SQRT2);
+            const a = Math.atan2(-node.axisY, node.axisX);
+            node.baseX = Math.cos(a) * r;
+            node.baseY = Math.sin(a) * r;
+          } else {
+            // 미분류: 바깥 링에 고정(회전 안 함).
+            const u = unsortedAngle.get(node.id);
+            if (u) { node.x = u.x; node.y = u.y; node.fx = u.x; node.fy = u.y; node.vx = 0; node.vy = 0; }
+          }
+        }
+      }
+      // 분류 브랜드 회전: 클러스터 중심 + 회전된 base 에 fx/fy 직접 고정.
+      for (const [id, θ] of clusterRotation) clusterRotation.set(id, θ + OMEGA);
       for (const node of graphData.nodes) {
-        if (node.type === "cluster") {
-          const p = clusterPos.get(node.id);
-          if (!p) continue;
-          node.x = p.x; node.y = p.y; node.fx = p.x; node.fy = p.y;
-          continue;
-        }
-        if (node.type !== "brand") continue;
-        const cpos = node.nodeId ? clusterPos.get(node.nodeId) : undefined;
-        if (cpos && node.axisX != null && node.axisY != null) {
-          const rMax = rMaxByCluster.get(node.nodeId!) ?? RADIUS_MIN_R;
-          const mag = Math.hypot(node.axisX, node.axisY);
-          const r = CLUSTER_RADIUS_MIN + (rMax - CLUSTER_RADIUS_MIN) * (mag / Math.SQRT2);
-          const a = Math.atan2(-node.axisY, node.axisX);
-          const bx = Math.cos(a) * r;
-          const by = Math.sin(a) * r;
-          node.baseX = bx; node.baseY = by;
-          node.x = cpos.x + bx; node.y = cpos.y + by;
-          node.fx = node.x; node.fy = node.y;
-          node.vx = 0; node.vy = 0;
-        } else {
-          const u = unsortedAngle.get(node.id);
-          if (!u) continue;
-          node.x = u.x; node.y = u.y; node.fx = u.x; node.fy = u.y;
-          node.vx = 0; node.vy = 0;
-        }
+        if (node.type !== "brand" || node.baseX == null || node.baseY == null || !node.nodeId) continue;
+        const cpos = clusterPos.get(node.nodeId);
+        if (!cpos) continue;
+        const θ = clusterRotation.get(node.nodeId) ?? 0;
+        // 시계방향 회전 (screen y-down): (x', y') = (x cosθ - y sinθ, x sinθ + y cosθ)
+        const c = Math.cos(θ), s = Math.sin(θ);
+        const tx = cpos.x + node.baseX * c - node.baseY * s;
+        const ty = cpos.y + node.baseX * s + node.baseY * c;
+        node.fx = tx; node.fy = ty; node.x = tx; node.y = ty;
       }
     };
 
-    // === Phase 1: 정적 배치 + 다른 물리 끔 ===
-    // 노드가 fx/fy 로 고정되므로 어떤 force 도 위치를 바꾸지 않는다.
-    fg.d3Force("axis", staticPlacement);
+    // 물리 전부 끄고 rotateForce 만 등록 → tick 1 부터 배치+회전.
+    fg.d3Force("axis", null);
     fg.d3Force("clusterRepulse", null);
-    fg.d3Force("position", null);
     fg.d3Force("radial", null);
     fg.d3Force("orbit", null);
     fg.d3Force("wander", null);
     fg.d3Force("center", null);
     fg.d3Force("collide", null);
+    fg.d3Force("position", rotateForce);
     const charge = fg.d3Force("charge");
     if (charge) charge.strength(0);
     const link = fg.d3Force("link");
     if (link) link.strength(() => 0);
+    // alphaTarget 양수 → sim 이 영원히 ticking (회전 지속).
+    if (typeof fg.d3AlphaTarget === "function") fg.d3AlphaTarget(0.3);
     fg.d3ReheatSimulation();
-
-    // === Phase 2: SETTLE_MS 이후 lock + 회전 모드 전환 ===
-    const switchPhase = setTimeout(() => {
-      const clusterRotation = new Map<string, number>();
-      for (const node of graphData.nodes) {
-        if (node.type === "cluster") clusterRotation.set(node.id, 0);
-      }
-
-      // 브랜드 고정 해제 → positionForce 가 회전 타깃으로 부드럽게 이동시킬 수 있게.
-      // 회전 base 는 배치 때 저장한 baseX/baseY (정확한 결정론적 오프셋) 를 그대로 사용.
-      for (const node of graphData.nodes) {
-        if (node.type !== "brand") continue;
-        if (node.baseX == null || node.baseY == null) continue; // 미분류는 고정 유지
-        node.fx = undefined; node.fy = undefined;
-      }
-
-      const OMEGA = 0.0012; // rad/tick → 1회전 ≈ 90초
-      const positionForce = () => {
-        for (const [id, θ] of clusterRotation) {
-          clusterRotation.set(id, θ + OMEGA);
-        }
-        for (const node of graphData.nodes) {
-          if (node.type !== "brand") continue;
-          if (node.baseX == null || node.baseY == null || !node.nodeId) continue;
-          const cpos = clusterPos.get(node.nodeId);
-          if (!cpos) continue;
-          const cx = cpos.x, cy = cpos.y;
-          const θ = clusterRotation.get(node.nodeId) ?? 0;
-          // 시계방향 회전 (screen y-down): (x', y') = (x cosθ - y sinθ, x sinθ + y cosθ)
-          const c = Math.cos(θ), s = Math.sin(θ);
-          const targetX = cx + node.baseX * c - node.baseY * s;
-          const targetY = cy + node.baseX * s + node.baseY * c;
-          const k = 0.15;
-          const nx = typeof node.x === "number" ? node.x : 0;
-          const ny = typeof node.y === "number" ? node.y : 0;
-          node.vx = (node.vx ?? 0) + (targetX - nx) * k;
-          node.vy = (node.vy ?? 0) + (targetY - ny) * k;
-        }
-      };
-
-      fg.d3Force("axis", null);
-      fg.d3Force("clusterRepulse", null);
-      fg.d3Force("position", positionForce);
-      const link2 = fg.d3Force("link");
-      if (link2) link2.strength(() => 0);
-      fg.d3Force("center", null);
-      fg.d3Force("collide", null); // 회전 타깃이 모든 위치를 결정 → collide 불필요(안정성)
-      const charge2 = fg.d3Force("charge");
-      if (charge2) charge2.strength(0);
-
-      // alphaTarget 양수로 두면 sim이 그 위에서 영원히 ticking → canvas 안 멈춤(회전 지속).
-      if (typeof fg.d3AlphaTarget === "function") fg.d3AlphaTarget(0.3);
-      fg.d3ReheatSimulation();
-    }, SETTLE_MS);
-
-    return () => clearTimeout(switchPhase);
   }, [graphData]);
 
   useEffect(() => {
@@ -417,25 +374,33 @@ export default function GraphCanvas() {
           }
         }}
         nodeCanvasObjectMode={() => "replace"}
-        linkColor={(l: FGLink) => {
-          // cluster-member 스포크는 2194개라 많이 쌓여 화면을 가린다 → 매우 옅게.
-          // 클러스터 선택 시엔 그 클러스터의 멤버 스포크만 살짝 보이고 나머지는 거의 숨김.
-          if (l.type === "node-relation") return "#0D0D0D55";
-          if (l.type === "cluster-member") {
-            if (!selectedClusterId) return "#0D0D0D10";
-            const src = typeof l.source === "object" ? (l.source as FGNode).id : l.source;
-            return src === selectedClusterId ? "#0D0D0D24" : "#0D0D0D06";
-          }
-          return "#0D0D0D14";
+        linkVisibility={(l: FGLink) => {
+          // 클러스터 선택 시: 그 클러스터의 스포크만 보임 (나머지 회색 잡선 완전 숨김).
+          if (l.type !== "cluster-member") return true;
+          if (!selectedClusterId) return true;
+          const src = typeof l.source === "object" ? (l.source as FGNode).id : l.source;
+          return src === selectedClusterId;
         }}
-        linkWidth={(l: FGLink) =>
-          l.type === "node-relation" ? 1.2 :
-          l.type === "cluster-member" ? 0.4 : 0.4
-        }
+        linkColor={(l: FGLink) => {
+          if (l.type === "node-relation") return "#0D0D0D55";
+          if (l.type !== "cluster-member") return "#0D0D0D14";
+          // 스포크는 자기 클러스터 색으로 그린다 (스타일노드→브랜드 연결이 또렷이 보이게).
+          const srcNode = typeof l.source === "object" ? (l.source as FGNode) : null;
+          const color = srcNode?.color ?? "#0D0D0D";
+          if (selectedClusterId) return color + "AA"; // 선택: 또렷
+          return color + "26";                        // 비선택: 옅은 색 휠
+        }}
+        linkWidth={(l: FGLink) => {
+          if (l.type === "node-relation") return 1.2;
+          if (l.type !== "cluster-member") return 0.4;
+          const src = typeof l.source === "object" ? (l.source as FGNode).id : l.source;
+          return selectedClusterId && src === selectedClusterId ? 1.1 : 0.5;
+        }}
         onNodeHover={(n: unknown) => setHoveredId(n ? (n as FGNode).id : null)}
         onNodeClick={(n: unknown) => {
           const node = n as FGNode;
-          if (node?.type === "brand") useUIStore.getState().setFocusedBrandId(node.id);
+          // 브랜드 노드 id 는 "b" 접두사가 붙어 있으므로 떼고 raw id 를 넘긴다.
+          if (node?.type === "brand") useUIStore.getState().setFocusedBrandId(node.id.replace(/^b/, ""));
           else if (node?.type === "cluster") useUIStore.getState().setSelectedClusterId(node.id);
         }}
         onEngineStop={() => {

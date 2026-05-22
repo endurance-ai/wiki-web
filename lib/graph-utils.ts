@@ -86,8 +86,11 @@ export function buildGraphData(
       color: n.color ?? "#888888",
       val: 20,
     })),
+    // 브랜드 노드 id 에 "b" 접두사 → style_nodes 와 brand_nodes 의 bigint id 충돌 방지.
+    // (둘 다 1,2,3.. 으로 시작 → 접두사 없이는 cluster-member 링크의 source="1"(primary_
+    //  style_node_id)이 브랜드 id=1 로 잘못 연결됨.)
     ...brands.map((b) => ({
-      id: b.id,
+      id: "b" + b.id,
       type: "brand" as const,
       name: b.name,
       color: b.node?.color ?? "#888888",
@@ -105,14 +108,14 @@ export function buildGraphData(
       .filter((b) => b.nodeId)
       .map((b) => ({
         source: b.nodeId!,
-        target: b.id,
+        target: "b" + b.id,
         strength: 1.0,
         type: "cluster-member" as const,
       })),
     // brand ↔ brand relations
     ...brandRelations.map((r) => ({
-      source: r.brandIdA,
-      target: r.brandIdB,
+      source: "b" + r.brandIdA,
+      target: "b" + r.brandIdB,
       strength: Number(r.strength),
       type: "brand-relation" as const,
     })),
