@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ApifyClient } from "apify-client";
-import { prisma } from "@/lib/db";
+import { findBrandNameForSlug, updateBrandInstagram } from "@/lib/repositories/brands";
 import { downloadFeedImages } from "@/lib/image-storage";
 
 export async function POST(
@@ -30,8 +30,8 @@ export async function POST(
   }
 
   // 브랜드 이름 (다운로드 폴더 슬러그용)
-  const existing = await prisma.brand.findUnique({ where: { id }, select: { name: true } });
-  if (!existing) {
+  const brandName = await findBrandNameForSlug(id);
+  if (!brandName) {
     return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   }
 
@@ -55,27 +55,23 @@ export async function POST(
       .filter((u): u is string => !!u);
 
     // 인스타 CDN URL은 24~48시간 후 만료 → 즉시 로컬 다운로드해서 영구 보관
-    const { localUrls } = await downloadFeedImages(remoteUrls, existing.name);
+    const { localUrls } = await downloadFeedImages(remoteUrls, brandName);
 
     // 피드가 비어 있으면 프로필 사진을 썸네일로 폴백 (이것도 로컬 저장)
     let thumbnailUrl: string | null = localUrls[0] ?? null;
     if (!thumbnailUrl) {
       const profilePic = (profile.profilePicUrlHD || profile.profilePicUrl) as string | undefined;
       if (profilePic) {
-        const { localUrls: profileLocal } = await downloadFeedImages([profilePic], existing.name);
+        const { localUrls: profileLocal } = await downloadFeedImages([profilePic], brandName);
         thumbnailUrl = profileLocal[0] ?? null;
       }
     }
 
-    const updated = await prisma.brand.update({
-      where: { id },
-      data: {
-        instagramHandle: profile.username as string,
-        instagramUrl: `https://www.instagram.com/${profile.username}/`,
-        thumbnailUrl,
-        feedThumbnails: localUrls,
-      },
-      include: { node: true, keywords: true },
+    const updated = await updateBrandInstagram(id, {
+      instagramHandle: profile.username as string,
+      instagramUrl: `https://www.instagram.com/${profile.username}/`,
+      thumbnailUrl,
+      feedThumbnails: localUrls,
     });
 
     return NextResponse.json({

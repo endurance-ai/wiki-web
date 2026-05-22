@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { checkDuplicate } from "@/lib/repositories/brands";
 
 export async function POST(req: NextRequest) {
   const { name } = await req.json();
-  const existing = await prisma.brand.findUnique({ where: { name } });
-  if (existing) {
+  const exists = await checkDuplicate(name);
+  if (exists) {
     return NextResponse.json({ exists: true }, { status: 409 });
   }
   return NextResponse.json({ exists: false });

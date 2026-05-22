@@ -1,9 +1,9 @@
 import type {
-  Brand,
   BrandNode,
+  BrandWithNode,
   BrandRelation,
   NodeRelation,
-} from "@prisma/client";
+} from "@/lib/types";
 
 export interface GraphNode {
   id: string;
@@ -29,8 +29,6 @@ export interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
 }
-
-type BrandWithNode = Brand & { node: BrandNode | null };
 
 export function buildGraphData(
   clusterNodes: BrandNode[],

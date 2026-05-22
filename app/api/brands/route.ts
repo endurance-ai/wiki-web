@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { createBrand, listBrands, checkDuplicate } from "@/lib/repositories/brands";
 
 export async function GET() {
-  const brands = await prisma.brand.findMany({
-    include: { node: true, keywords: true },
-    orderBy: { createdAt: "asc" },
-  });
+  const brands = await listBrands();
   return NextResponse.json(brands);
 }
 
@@ -17,22 +14,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "name and nodeId are required" }, { status: 400 });
   }
 
-  const existing = await prisma.brand.findUnique({ where: { name } });
-  if (existing) {
+  const exists = await checkDuplicate(name);
+  if (exists) {
     return NextResponse.json({ error: "이미 등록된 브랜드입니다" }, { status: 409 });
   }
 
-  const brand = await prisma.brand.create({
-    data: {
-      name,
-      instagramHandle,
-      nodeId,
-      keywords: {
-        create: (keywords ?? []).map((k: string) => ({ keyword: k })),
-      },
-    },
-    include: { keywords: true, node: true },
-  });
+  const brand = await createBrand({ name, instagramHandle, nodeId, keywords });
 
   return NextResponse.json(brand, { status: 201 });
 }
