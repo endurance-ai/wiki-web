@@ -43,6 +43,41 @@ export function buildGraphData(
   brandRelations: BrandRelation[],
   nodeRelations: StyleNodeAdjacency[]
 ): GraphData {
+  // x/y_position are GLOBAL UMAP coords, but GraphCanvas's axisForce expects
+  // per-cluster micro-coords in [-1,+1]. Normalize each cluster's members
+  // (min-max per axis) so brands form a tidy radial spread around their style
+  // node. Brands without UMAP coords get a deterministic ring position so they
+  // still orbit their cluster instead of floating.
+  const byCluster = new Map<string, BrandWithNode[]>();
+  for (const b of brands) {
+    if (!b.nodeId) continue;
+    const arr = byCluster.get(b.nodeId);
+    if (arr) arr.push(b);
+    else byCluster.set(b.nodeId, [b]);
+  }
+  const axisByBrand = new Map<string, { x: number; y: number }>();
+  for (const members of byCluster.values()) {
+    const pts = members.filter(
+      (m) => typeof m.xPosition === "number" && typeof m.yPosition === "number"
+    );
+    const xs = pts.map((m) => m.xPosition as number);
+    const ys = pts.map((m) => m.yPosition as number);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const rangeX = maxX - minX || 1, rangeY = maxY - minY || 1;
+    members.forEach((m, i) => {
+      if (typeof m.xPosition === "number" && typeof m.yPosition === "number") {
+        axisByBrand.set(m.id, {
+          x: (2 * (m.xPosition - minX)) / rangeX - 1,
+          y: (2 * (m.yPosition - minY)) / rangeY - 1,
+        });
+      } else {
+        const ang = (2 * Math.PI * i) / Math.max(members.length, 1);
+        axisByBrand.set(m.id, { x: Math.cos(ang) * 0.6, y: Math.sin(ang) * 0.6 });
+      }
+    });
+  }
+
   const nodes: GraphNode[] = [
     ...clusterNodes.map((n) => ({
       id: n.id,
@@ -58,8 +93,8 @@ export function buildGraphData(
       color: b.node?.color ?? "#888888",
       thumbnailUrl: b.thumbnailUrl ?? undefined,
       nodeId: b.nodeId ?? undefined,
-      axisX: b.xPosition,
-      axisY: b.yPosition,
+      axisX: b.nodeId ? (axisByBrand.get(b.id)?.x ?? null) : null,
+      axisY: b.nodeId ? (axisByBrand.get(b.id)?.y ?? null) : null,
       val: 8,
     })),
   ];
