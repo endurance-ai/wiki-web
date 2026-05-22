@@ -6,6 +6,7 @@ import {
   checkDuplicateExcept,
 } from "@/lib/repositories/brands";
 import { BrandUpdateSchema, isUuid } from "@/lib/validation";
+import { writesDisabled } from "@/lib/write-guard";
 
 export async function GET(
   _req: NextRequest,
@@ -22,6 +23,8 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const blocked = writesDisabled(); if (blocked) return blocked;
+
   const { id } = await params;
   if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -58,6 +61,8 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const blocked = writesDisabled(); if (blocked) return blocked;
+
   const { id } = await params;
   if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   await deleteBrand(id);

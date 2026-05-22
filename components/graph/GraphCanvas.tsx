@@ -16,6 +16,8 @@ interface FGNode {
   val: number;
   x?: number;
   y?: number;
+  vx?: number;
+  vy?: number;
   fx?: number;
   fy?: number;
   [key: string]: unknown;

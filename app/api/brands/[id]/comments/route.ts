@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listComments, createComment } from "@/lib/repositories/comments";
 import { CommentCreateSchema, isUuid } from "@/lib/validation";
+import { writesDisabled } from "@/lib/write-guard";
 
 export async function GET(
   _req: NextRequest,
@@ -16,6 +17,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const blocked = writesDisabled(); if (blocked) return blocked;
+
   const { id } = await params;
   if (!isUuid(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

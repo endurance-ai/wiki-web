@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createBrand, listBrands, checkDuplicate } from "@/lib/repositories/brands";
 import { BrandCreateSchema } from "@/lib/validation";
+import { writesDisabled } from "@/lib/write-guard";
 
 export async function GET() {
   const brands = await listBrands();
@@ -8,6 +9,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const blocked = writesDisabled(); if (blocked) return blocked;
+
   let body: unknown;
   try {
     body = await req.json();
