@@ -6,9 +6,17 @@ import { clusterLabel } from "@/lib/cluster-labels";
 import { brandDescription } from "@/lib/brand-descriptions";
 import { useT, useTKeyword, useLocale } from "@/lib/i18n";
 import { safeHref } from "@/lib/validation";
+import { thumbSrc } from "@/lib/image-src";
 
 interface Keyword { id: string; keyword: string; }
 interface NodeMeta { id: string; name: string; color: string | null; }
+interface Post {
+  shortcode: string;
+  postUrl: string | null;
+  caption: string | null;
+  imageUrls: string[];
+  likesCount: number | null;
+}
 interface BrandFull {
   id: string;
   name: string;
@@ -18,19 +26,17 @@ interface BrandFull {
   feedThumbnails: string[];
   node: NodeMeta | null;
   keywords: Keyword[];
+  posts: Post[];
 }
 
 const HELVETICA = '"Helvetica Neue", Helvetica, "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif';
-
-function thumbSrc(url: string | null): string | null {
-  if (!url) return null;
-  return url.startsWith("/") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`;
-}
 
 export default function BrandPopup() {
   const focusedBrandId = useUIStore((s) => s.focusedBrandId);
   const setFocusedBrandId = useUIStore((s) => s.setFocusedBrandId);
   const [brand, setBrand] = useState<BrandFull | null>(null);
+  // Lightbox state: index into brand.posts, plus the active image within that post.
+  const [lightbox, setLightbox] = useState<{ post: number; image: number } | null>(null);
   const t = useT();
   const tKw = useTKeyword();
   const locale = useLocale();
@@ -40,13 +46,16 @@ export default function BrandPopup() {
     if (!focusedBrandId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 의도된 리셋: 선택 해제 시 상세 비움
       setBrand(null);
+      setLightbox(null);
       return;
     }
     let cancelled = false;
     fetch(`/api/brands/${focusedBrandId}`)
-      .then((r) => r.json())
-      .then((b: BrandFull) => {
-        if (!cancelled) setBrand(b);
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: BrandFull | null) => {
+        // Guard against error payloads (404 returns { error } with no name) —
+        // setting that as `brand` would crash brandDescription(brand.name).
+        if (!cancelled) setBrand(b && typeof b.name === "string" ? b : null);
       })
       .catch(() => {});
     return () => {
@@ -54,15 +63,33 @@ export default function BrandPopup() {
     };
   }, [focusedBrandId]);
 
-  // ESC to close
+  // ESC closes the lightbox first (if open), otherwise the whole popup.
+  // ArrowLeft/Right cycle images while the lightbox is open.
   useEffect(() => {
     if (!focusedBrandId) return;
     const h = (e: KeyboardEvent) => {
+      if (lightbox && brand) {
+        const post = brand.posts[lightbox.post];
+        const count = post?.imageUrls.length ?? 0;
+        if (e.key === "Escape") {
+          setLightbox(null);
+          return;
+        }
+        if (e.key === "ArrowLeft") {
+          setLightbox((s) => (s ? { ...s, image: Math.max(0, s.image - 1) } : s));
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          setLightbox((s) => (s ? { ...s, image: Math.min(count - 1, s.image + 1) } : s));
+          return;
+        }
+        return;
+      }
       if (e.key === "Escape") setFocusedBrandId(null);
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [focusedBrandId, setFocusedBrandId]);
+  }, [focusedBrandId, setFocusedBrandId, lightbox, brand]);
 
   // Lock body scroll while open
   useEffect(() => {
@@ -338,7 +365,331 @@ export default function BrandPopup() {
             </div>
           </div>
         )}
+
+        {/* Instagram feed — full-width grid of post covers below the header block */}
+        {brand && brand.posts.length > 0 && (
+          <div style={{ padding: "8px 8px 12px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 8,
+                marginBottom: 12,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.95rem",
+                  fontWeight: 700,
+                  letterSpacing: "-0.01em",
+                  color: "#0D0D0D",
+                }}
+              >
+                {t("instagram")}
+              </span>
+              <span style={{ fontSize: "0.8rem", color: "rgba(13,13,13,0.4)" }}>
+                {brand.posts.length} {t("posts")}
+              </span>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 6,
+              }}
+            >
+              {brand.posts.map((post, i) => {
+                const cover = thumbSrc(post.imageUrls[0] ?? null);
+                const isCarousel = post.imageUrls.length > 1;
+                return (
+                  <button
+                    key={post.shortcode}
+                    onClick={() => setLightbox({ post: i, image: 0 })}
+                    aria-label={`${brand.name} — ${t("instagram")} ${i + 1}`}
+                    style={{
+                      position: "relative",
+                      padding: 0,
+                      border: "none",
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      cursor: "pointer",
+                      aspectRatio: "1 / 1",
+                      background: "rgba(13,13,13,0.05)",
+                    }}
+                  >
+                    {cover && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={cover}
+                        alt=""
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                          transition: "transform 0.25s ease",
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.transform = "scale(1.06)")
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.transform = "scale(1)")
+                        }
+                      />
+                    )}
+                    {isCarousel && (
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          top: 6,
+                          right: 6,
+                          width: 18,
+                          height: 18,
+                          borderRadius: 5,
+                          background: "rgba(20,20,25,0.55)",
+                          color: "#fff",
+                          fontSize: 11,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          backdropFilter: "blur(2px)",
+                        }}
+                      >
+                        ▦
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* In-modal carousel lightbox — above the popup (zIndex 200) */}
+      {lightbox && brand && brand.posts[lightbox.post] && (
+        (() => {
+          const post = brand.posts[lightbox.post];
+          const imgs = post.imageUrls;
+          const idx = Math.min(lightbox.image, imgs.length - 1);
+          const big = thumbSrc(imgs[idx] ?? null);
+          const postHref =
+            safeHref(post.postUrl) ??
+            `https://www.instagram.com/p/${post.shortcode}/`;
+          return (
+            <div
+              onClick={() => setLightbox(null)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 200,
+                background: "rgba(15, 15, 20, 0.78)",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "32px 24px",
+                animation: "brandOverlayIn 0.18s ease-out",
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: "relative",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 14,
+                  maxWidth: "min(92vw, 720px)",
+                  width: "100%",
+                  fontFamily: HELVETICA,
+                }}
+              >
+                {/* Close */}
+                <button
+                  onClick={() => setLightbox(null)}
+                  aria-label="Close"
+                  style={{
+                    position: "absolute",
+                    top: -6,
+                    right: -6,
+                    width: 34,
+                    height: 34,
+                    borderRadius: "50%",
+                    border: "1px solid rgba(255,255,255,0.25)",
+                    background: "rgba(20,20,25,0.5)",
+                    color: "#fff",
+                    fontSize: 14,
+                    cursor: "pointer",
+                    zIndex: 2,
+                  }}
+                >
+                  ✕
+                </button>
+
+                {/* Image + nav */}
+                <div
+                  style={{
+                    position: "relative",
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {big && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={big}
+                      alt={`${brand.name} — ${idx + 1}/${imgs.length}`}
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: "70vh",
+                        objectFit: "contain",
+                        borderRadius: 14,
+                        display: "block",
+                        background: "rgba(0,0,0,0.2)",
+                      }}
+                    />
+                  )}
+
+                  {imgs.length > 1 && (
+                    <>
+                      <button
+                        onClick={() =>
+                          setLightbox((s) =>
+                            s ? { ...s, image: Math.max(0, s.image - 1) } : s
+                          )
+                        }
+                        disabled={idx === 0}
+                        aria-label={t("prevImage")}
+                        style={{
+                          position: "absolute",
+                          left: 8,
+                          width: 40,
+                          height: 40,
+                          borderRadius: "50%",
+                          border: "none",
+                          background: "rgba(20,20,25,0.5)",
+                          color: "#fff",
+                          fontSize: 18,
+                          cursor: idx === 0 ? "default" : "pointer",
+                          opacity: idx === 0 ? 0.3 : 1,
+                        }}
+                      >
+                        ◀
+                      </button>
+                      <button
+                        onClick={() =>
+                          setLightbox((s) =>
+                            s
+                              ? { ...s, image: Math.min(imgs.length - 1, s.image + 1) }
+                              : s
+                          )
+                        }
+                        disabled={idx === imgs.length - 1}
+                        aria-label={t("nextImage")}
+                        style={{
+                          position: "absolute",
+                          right: 8,
+                          width: 40,
+                          height: 40,
+                          borderRadius: "50%",
+                          border: "none",
+                          background: "rgba(20,20,25,0.5)",
+                          color: "#fff",
+                          fontSize: 18,
+                          cursor: idx === imgs.length - 1 ? "default" : "pointer",
+                          opacity: idx === imgs.length - 1 ? 0.3 : 1,
+                        }}
+                      >
+                        ▶
+                      </button>
+                    </>
+                  )}
+
+                  {imgs.length > 1 && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        bottom: 10,
+                        padding: "3px 10px",
+                        borderRadius: 999,
+                        background: "rgba(20,20,25,0.6)",
+                        color: "#fff",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      {idx + 1} / {imgs.length}
+                    </span>
+                  )}
+                </div>
+
+                {/* Caption + meta + source link */}
+                <div
+                  style={{
+                    width: "100%",
+                    maxWidth: 560,
+                    color: "#fff",
+                    textAlign: "center",
+                  }}
+                >
+                  {post.caption && (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        lineHeight: 1.6,
+                        opacity: 0.85,
+                        whiteSpace: "pre-line",
+                        display: "-webkit-box",
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        marginBottom: 10,
+                      }}
+                    >
+                      {post.caption}
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 14,
+                      fontSize: "0.82rem",
+                    }}
+                  >
+                    {post.likesCount != null && (
+                      <span style={{ opacity: 0.85 }}>
+                        ♥ {post.likesCount.toLocaleString()}
+                      </span>
+                    )}
+                    <a
+                      href={postHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "#fff",
+                        fontWeight: 600,
+                        textDecoration: "none",
+                        opacity: 0.95,
+                      }}
+                    >
+                      {t("viewOnInstagram")} ↗
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()
+      )}
 
       <style>{`
         @keyframes brandOverlayIn {

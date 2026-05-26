@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 //   - inline <style> blocks + inline style attributes (canvas/popup) → 'unsafe-inline' for style
 //   - same-origin /api/proxy-image relaying Instagram CDN images → img-src self
 //   - direct Instagram/Facebook CDN <img> URLs → img-src cdninstagram/fbcdn
+//   - direct public S3 feed images (wiki-web bucket) → img-src the bucket host
 //   - Pretendard webfont CSS from jsdelivr (app/layout.tsx) → style-src/font-src jsdelivr
 //   - data:/blob: images used by the react-force-graph canvas
 // Next.js dev/runtime needs 'unsafe-inline' (and 'unsafe-eval' in dev) for its
@@ -15,7 +16,7 @@ const csp = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-  "img-src 'self' data: blob: https://*.cdninstagram.com https://*.fbcdn.net",
+  "img-src 'self' data: blob: https://*.cdninstagram.com https://*.fbcdn.net https://kikoai-wiki-web.s3.ap-northeast-2.amazonaws.com",
   "font-src 'self' data: https://cdn.jsdelivr.net",
   "connect-src 'self'",
   "frame-ancestors 'none'",

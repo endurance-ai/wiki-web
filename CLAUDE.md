@@ -36,14 +36,18 @@ npm run lint      # ESLint
 | **데이터 계층** | **raw `pg` (node-postgres) Pool + repository 패턴** (app/ai와 동일). ~~Prisma~~ 폐기 (2026-05-22) |
 | DB | dev-app Postgres(54.116.104.193) **`wiki` 스키마** 격리. `public`/`ai` 스키마(kikoai 운영, 118k SKU)는 **건드리지 않음** (`wiki.brand_nodes` / `wiki.style_nodes`는 `public` 미러) |
 | 인증 | next-auth v5 (설치만, **미구성** — 참여형 위키 단계서 구축) |
-| 외부연동 | Apify (인스타 프로필 스크랩 — 실사용 경로), 이미지는 추후 AWS S3 저장 예정 |
+| 외부연동 | Apify (인스타 프로필 스크랩 — 실사용 경로), AWS S3 (`kikoai-wiki-web`, ap-northeast-2) — 인스타 피드 이미지 영구 저장 (`feed/*` public-read, `lib/s3.ts`) |
 | 배포 | Vercel 지향 (단 DB가 EC2라 네트워크 고려 필요) |
 
 ## 데이터 계층 규칙
 
 - `lib/db.ts` — 공유 `pool` (pg Pool, `search_path=wiki`, sslmode 분리 + `rejectUnauthorized:false` for dev-app self-signed). app의 `pg-pool.ts`와 동일 패턴.
-- `lib/repositories/{graph,nodes,brands,comments}.ts` — 타입 있는 raw SQL 쿼리. SQL alias로 **camelCase 키** 반환 (프론트 무변경).
-- `lib/types.ts` — row 인터페이스 (`StyleNode`=클러스터, `BrandNode`=브랜드, `BrandKeyword`, `BrandRelation`, `StyleNodeAdjacency`, `BrandComment`).
+- `lib/repositories/{graph,nodes,brands,comments,posts}.ts` — 타입 있는 raw SQL 쿼리. SQL alias로 **camelCase 키** 반환 (프론트 무변경).
+- `lib/types.ts` — row 인터페이스 (`StyleNode`=클러스터, `BrandNode`=브랜드, `BrandKeyword`, `BrandRelation`, `StyleNodeAdjacency`, `BrandComment`, `BrandInstagramPost`).
+- `lib/s3.ts` — 공유 S3 클라이언트 + `putFeedObject()` (서버 전용; `server-only`). 버킷 `kikoai-wiki-web`, region `ap-northeast-2`.
+- `lib/image-src.ts` — `thumbSrc(url)` 공유 유틸. S3 버킷 호스트는 직접 로드, 로컬 `/` 경로는 패스스루, 그 외 외부 URL은 `/api/proxy-image` 경유.
+- `lib/instagram.ts` — Apify 응답에서 `ScrapedPost[]` 추출 (`extractPosts()`). 캐러셀 이미지 전체 보존.
+- `lib/image-storage.ts` — `uploadRemoteImagesToS3()` 추가: Instagram CDN 이미지를 S3 `feed/` prefix에 영구 복사 (로컬 저장 경로 `downloadFeedImages`는 레거시 호환용 유지).
 - `database/migrations/*.sql` — raw SQL 마이그레이션 (app 방식, 번호+헤더+`BEGIN;…COMMIT;`). 스키마 변경 시 새 번호 파일 추가.
 - DB 연결정보는 `.env.local` (gitignore). `DATABASE_URL` → dev-app `wiki`.
 
@@ -69,7 +73,8 @@ npm run lint      # ESLint
 
 ## 알려진 부채 / 주의 (작업 시 인지)
 
-- 🟡 보안 하드닝 1차 완료: `write-guard.ts`(403 뷰 전용), `url-guard.ts`(SSRF 허용목록), `proxy.ts`(레이트리밋), `validation.ts`(Zod), `next.config.ts`(보안헤더). **남은 부채**: next-auth 미구성, `ssl.rejectUnauthorized:false` (dev only). 상세: `.moai/reports/security-audit.md`.
+- 🟡 보안 하드닝 1차 완료: `write-guard.ts`(403 뷰 전용), `url-guard.ts`(SSRF 허용목록), `proxy.ts`(레이트리밋), `validation.ts`(Zod), `next.config.ts`(보안헤더 + S3 img-src). **남은 부채**: next-auth 미구성, `ssl.rejectUnauthorized:false` (dev only). 상세: `.moai/reports/security-audit.md`.
+- ✅ Instagram 이미지 S3 영구 저장 완료 (2026-05-25): `lib/s3.ts` + `uploadRemoteImagesToS3()`. 이미지가 S3 `feed/*`에 저장되고 `wiki.brand_instagram_posts` 테이블(migration 004)에 글 단위로 보존됨. `public/feed-images/` 로컬 경로는 레거시 호환용으로만 잔존.
 - `tsc --noEmit` 통과 (타입 클린).
 - 테스트 0 (development_mode = `ddd`).
 

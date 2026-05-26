@@ -35,13 +35,15 @@ kikoweb is a fashion brand node wiki that renders a force-directed graph of 20 s
 ### Brand Detail Popup
 
 - Panel triggered on brand card click (`components/panel/BrandPopup.tsx`)
-- Displays: Instagram feed thumbnails (locally cached in `public/feed-images/`), style keywords, related brands, comments thread
+- Displays: Instagram feed grid (4-column, S3-served images from `wiki.brand_instagram_posts`), lightbox carousel with prev/next navigation and caption, style keywords, related brands, comments thread
 
 ### Instagram Feed Ingestion
 
-- Apify actor scrapes Instagram profiles on demand (`/api/brands/[id]/refresh-instagram`)
-- Images downloaded from Instagram CDN to `public/feed-images/{slug}/` (permanent local storage via `lib/image-storage.ts`)
-- DB stores local `/feed-images/...` paths in `brand_nodes.feed_thumbnails[]`
+- Apify actor scrapes Instagram profiles on demand (`/api/brands/[id]/refresh-instagram`) or in bulk via `scripts/ingest_instagram_posts.js`
+- 12 posts × all carousel images per scrape; images permanently stored in S3 (`kikoai-wiki-web/feed/{brandId}/{shortcode}-{i}.{ext}`, public-read)
+- Post rows stored in `wiki.brand_instagram_posts` (shortcode, S3 image_urls[], caption, likes_count, position); `GET /api/brands/[id]` returns `posts[]` alongside the brand
+- Cover thumbnail (`brand_nodes.thumbnail_url`) = first image of first post; `feed_thumbnails` retained for backward compatibility
+- ~989 brands backfilled as of 2026-05-25 (~36.8k images stored)
 
 ### Comments
 
