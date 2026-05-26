@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useUIStore } from "@/lib/store";
 import { clusterLabel } from "@/lib/cluster-labels";
+import { thumbSrc } from "@/lib/image-src";
 
 interface FGNode {
   id: string;
@@ -63,8 +64,8 @@ function loadImage(url: string): HTMLImageElement | null {
   if (cached) return cached;
   imgCache.set(url, "loading");
   const img = new Image();
-  // 로컬 경로(/feed-images/...)는 그대로, 외부 URL만 프록시 경유
-  img.src = url.startsWith("/") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`;
+  // S3(public)는 직접, 로컬 경로는 그대로, 그 외 외부 URL만 프록시 경유 (lib/image-src)
+  img.src = thumbSrc(url) ?? url;
   img.onload = () => imgCache.set(url, img);
   img.onerror = () => imgCache.set(url, "error");
   return null;

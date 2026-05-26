@@ -23,6 +23,7 @@ const LABELS: Record<string, string> = {
   "센슈얼 페미닌": "Sensual Feminine",
   "고프코어 아웃도어": "Gorpcore Outdoor",
   "이탈리안 테크럭셔리": "Italian Tech-luxury",
+  "미분류": "Unclassified",
 };
 
 // 접두사("A-1 ", "B ", "F-3 " 등) 제거. 새 name_ko 에는 prefix 가 없지만

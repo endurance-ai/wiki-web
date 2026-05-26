@@ -22,6 +22,7 @@
 | Validation | zod | ^4.4.3 | Request-body schemas in `lib/validation.ts`; all mutating routes use `safeParse` |
 | Auth | next-auth | 5.0.0-beta.31 | Installed but NOT configured (placeholder) |
 | Instagram ingestion | apify-client | 2.23.2 | Active scraping path |
+| AWS S3 client | @aws-sdk/client-s3 | ^3.1053.0 | Feed image permanent storage; `lib/s3.ts`; bucket `kikoai-wiki-web` ap-northeast-2 |
 
 ---
 
@@ -60,6 +61,7 @@ Domain query functions are in `lib/repositories/`:
 | `lib/repositories/nodes.ts` | `BrandNode` list queries |
 | `lib/repositories/brands.ts` | Brand CRUD — list, get with detail, create, update, delete |
 | `lib/repositories/comments.ts` | Comment list, create, delete |
+| `lib/repositories/posts.ts` | `getBrandPosts()` / `replaceBrandPosts()` — `wiki.brand_instagram_posts` |
 
 Row shapes are plain TypeScript interfaces in `lib/types.ts` (camelCase; SQL aliases map snake_case columns). Key rename after the 002 migration: `StyleNode` (was BrandNode/cluster) and `BrandNode` (was Brand). Composite types (`BrandWithDetail`, `BrandWithNodeKeywords`) preserve the wire shape so existing consumers (routes, `graph-utils`) required no changes. bigint ids are cast `::text` in all repository queries so the frontend receives string ids.
 
@@ -94,6 +96,10 @@ Dev server port is **3500** (set in `package.json` scripts: `"next dev -p 3500"`
 | `DATABASE_CA_CERT` | Optional path to a PEM CA cert; when set, enables full TLS verification (`rejectUnauthorized: true`) instead of the dev fallback |
 | `WIKI_WRITE_ENABLED` | Set to `"true"` to enable mutating API routes (write-guard in `lib/write-guard.ts`); unset = view-only mode (403 on all writes) |
 | `APIFY_API_TOKEN` | Apify actor authentication for Instagram scraping |
+| `S3_BUCKET` | S3 bucket name (default: `kikoai-wiki-web`) |
+| `S3_REGION` | S3 region (default: `ap-northeast-2`) |
+| `S3_PUBLIC_BASE` | Public URL base for bucket objects (default: `https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com`) |
+| `AWS_PROFILE` | AWS shared-credentials profile (default: `kiko.ai`); used by default credential chain |
 | `NEXTAUTH_SECRET` | next-auth signing secret (required even in unconfigured state) |
 | `NEXTAUTH_URL` | Base URL for next-auth callbacks |
 
@@ -126,8 +132,10 @@ Schema is managed with **raw SQL migrations** under `database/migrations/`. Form
 |-----------|---------|
 | `001_init_wiki_schema.sql` | Baseline schema (originally from Prisma db push; idempotent, safe to re-run) |
 | `002_align_to_public_and_merge.sql` | Realigns naming to mirror `public` schema; drops old tables; imports ~2899 brands + 20 style clusters from `public`; derives ~26,366 keyword rows from `attributes` jsonb |
+| `003_propagate_instagram_handles.sql` | Backfills `wiki.brand_nodes.instagram_handle/instagram_url` from `public.brand_nodes.wiki` jsonb (1905 brands; idempotent) |
+| `004_brand_instagram_posts.sql` | Creates `wiki.brand_instagram_posts` — one row per post, `image_urls text[]` = S3 URLs ordered (cover = `[1]`), UNIQUE `(brand_id, shortcode)` |
 
-There is no migration history table yet — migrations are applied manually. A migration runner should be adopted before any production promotion.
+There is no migration history table yet — migrations are applied manually via `scripts/apply_migration.js` or directly. A migration runner should be adopted before any production promotion.
 
 ### Data State (post-002 migration)
 
@@ -136,11 +144,12 @@ Data sourced from `public.brand_nodes` + `public.style_nodes` (cross-schema INSE
 | Table | Rows | Notes |
 |-------|------|-------|
 | `wiki.style_nodes` | 20 | Mirrors public.style_nodes |
-| `wiki.brand_nodes` | ~2899 | Mirrors public.brand_nodes |
+| `wiki.brand_nodes` | ~2899 | Mirrors public.brand_nodes; 1905 rows have `instagram_handle` (migration 003) |
 | `wiki.brand_keywords` | ~26,366 | Derived from attributes jsonb |
 | `wiki.brand_relations` | 0 | Filled by compute_relations.js |
 | `wiki.style_node_adjacency` | 0 | Cluster-to-cluster edges |
 | `wiki.brand_comments` | 0 | |
+| `wiki.brand_instagram_posts` | ~36.8k | One row per post; `image_urls` = S3 public URLs (migration 004); backfilled by `scripts/ingest_instagram_posts.js` |
 
 ---
 
@@ -161,7 +170,7 @@ The **database** remains on the dev-app EC2 instance (not a managed cloud DB). C
 
 - The dev-app Postgres is a shared development cluster; a dedicated production instance is needed before public launch
 - `ssl.rejectUnauthorized: false` must be replaced with a valid CA cert in production
-- `public/feed-images/` (locally downloaded thumbnails) is ephemeral on serverless deployments; images must move to object storage (S3/R2/CDN) before production
+- Instagram feed images are now permanently stored in S3 (`kikoai-wiki-web/feed/*`); the legacy `public/feed-images/` local path is no longer written for new scrapes
 
 ### Linting
 
@@ -199,6 +208,6 @@ npm run lint     # ESLint 9 (flat config)
 | Issue | Notes |
 |-------|-------|
 | `brand_relations` and `style_node_adjacency` are empty | The graph's relation link types are defined but not populated; `compute_relations.js` script not yet run on the new dataset |
-| `public/feed-images/` is a local disk store | Not compatible with multi-instance or serverless deployment without migration to object storage |
+| `public/feed-images/` legacy local store | No longer written for new scrapes (S3 migration complete). Retained for any pre-migration locally-cached images; safe to clean up. |
 | Cross-schema integration (wiki ↔ kikoai production) | `wiki.brand_nodes` already mirrors `public.brand_nodes` (ids identical). Deeper integration (live sync, write-back) is a future phase — requires explicit coordination to avoid touching `public`/`ai` schemas |
-| Instagram thumbnails not yet re-fetched | 002 migration imported brands with null `thumbnail_url`/`feed_thumbnails`; Apify refresh pipeline will repopulate when writes are re-enabled |
+| Instagram thumbnails and feed posts | `scripts/ingest_instagram_posts.js` bulk-backfilled ~989 brands (~36.8k images) into S3 + `wiki.brand_instagram_posts`. Remaining ~916 brands (no handle or below confidence threshold) still have null `thumbnail_url`. |

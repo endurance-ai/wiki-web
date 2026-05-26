@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { assertSafeRemoteUrl } from "@/lib/url-guard";
+import { putFeedObject } from "@/lib/s3";
 
 const FEED_DIR = path.join(process.cwd(), "public", "feed-images");
 
@@ -77,4 +78,44 @@ export async function downloadFeedImages(
     slug,
     localUrls: results.filter((u): u is string => !!u),
   };
+}
+
+/**
+ * Download remote IG CDN images and upload them to S3 under `feed/`, returning the
+ * public S3 URLs (order preserved, failed items dropped). Instagram CDN URLs expire
+ * in 24-48h, so we persist a copy. SSRF-guarded (same allowlist as the local path).
+ *
+ * `keyPrefix` MUST start under `feed/` to be publicly readable (bucket policy),
+ * e.g. `feed/{brandId}/{shortcode}`. Object keys become `${keyPrefix}-${i}.${ext}`.
+ */
+export async function uploadRemoteImagesToS3(
+  remoteUrls: string[],
+  keyPrefix: string
+): Promise<string[]> {
+  const results = await Promise.all(
+    remoteUrls.map(async (url, i) => {
+      try {
+        const guard = await assertSafeRemoteUrl(url);
+        if (!guard.ok) return null;
+        // Follow redirects: Instagram CDN may 30x to the actual object; `manual`
+        // would surface the 3xx as !ok and silently drop every image. The host is
+        // already validated by assertSafeRemoteUrl above (allowlist + DNS guard).
+        const res = await fetch(guard.url, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+          },
+        });
+        if (!res.ok) return null;
+        const buf = Buffer.from(await res.arrayBuffer());
+        const ct = res.headers.get("content-type") || "image/jpeg";
+        const ext = ct.includes("webp") ? "webp" : ct.includes("png") ? "png" : "jpg";
+        const safeCt = ct.startsWith("image/") ? ct : "image/jpeg";
+        return await putFeedObject(`${keyPrefix}-${i}.${ext}`, buf, safeCt);
+      } catch {
+        return null;
+      }
+    })
+  );
+  return results.filter((u): u is string => !!u);
 }

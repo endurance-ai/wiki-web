@@ -14,6 +14,13 @@ const DICT: Dict = {
     en: "No description yet — be the first to write one!",
     ko: "아직 설명이 없어요 — 첫 번째로 작성해보세요!",
   },
+
+  // BrandPopup — Instagram feed
+  instagram:         { en: "Instagram",    ko: "인스타그램" },
+  posts:             { en: "posts",        ko: "게시물" },
+  viewOnInstagram:   { en: "View on Instagram", ko: "원글 보기" },
+  prevImage:         { en: "Previous image",     ko: "이전 이미지" },
+  nextImage:         { en: "Next image",         ko: "다음 이미지" },
 };
 
 // Korean (DB) → English keyword translations

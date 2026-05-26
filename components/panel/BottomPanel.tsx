@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useUIStore } from "@/lib/store";
 import { clusterLabel } from "@/lib/cluster-labels";
 import { useT, useLocale } from "@/lib/i18n";
+import { thumbSrc } from "@/lib/image-src";
 
 interface ClusterNode {
   id: string;
@@ -33,10 +34,6 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
 }
 
-function thumbSrc(url: string | null): string | null {
-  if (!url) return null;
-  return url.startsWith("/") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`;
-}
 
 export default function BottomPanel() {
   const [nodes, setNodes] = useState<ClusterNode[]>([]);

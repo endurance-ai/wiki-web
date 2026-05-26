@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ApifyClient } from "apify-client";
 import { findBrandNameForSlug, updateBrandInstagram } from "@/lib/repositories/brands";
-import { downloadFeedImages } from "@/lib/image-storage";
+import { replaceBrandPosts } from "@/lib/repositories/posts";
+import { uploadRemoteImagesToS3 } from "@/lib/image-storage";
+import { extractPosts } from "@/lib/instagram";
 import { RefreshInstagramSchema, isBigintId } from "@/lib/validation";
 import { writesDisabled } from "@/lib/write-guard";
 
@@ -45,7 +47,7 @@ export async function POST(
     return NextResponse.json({ error: "APIFY_TOKEN not configured" }, { status: 500 });
   }
 
-  // 브랜드 이름 (다운로드 폴더 슬러그용)
+  // 브랜드 존재 확인 (S3 키 prefix 는 안정적인 brand id 사용)
   const brandName = await findBrandNameForSlug(id);
   if (!brandName) {
     return NextResponse.json({ error: "Brand not found" }, { status: 404 });
@@ -64,37 +66,56 @@ export async function POST(
       return NextResponse.json({ error: "프로필을 찾을 수 없습니다" }, { status: 404 });
     }
 
-    const posts = (profile.latestPosts || profile.posts || []) as Array<Record<string, unknown>>;
-    const remoteUrls = posts
-      .slice(0, 9)
-      .map(p => (p.displayUrl || p.thumbnailUrl || p.imageUrl) as string | undefined)
-      .filter((u): u is string => !!u);
+    // 12개 글 × 전체 캐러셀 이미지를 추출 → 각 글 이미지를 S3 로 영구 저장.
+    // 인스타 CDN URL 은 24~48h 만료라 즉시 복사해 둔다. S3 키: feed/{brandId}/{shortcode}.
+    const scraped = extractPosts(profile, 12);
+    const posts = await Promise.all(
+      scraped.map(async (p) => {
+        const imageUrls = await uploadRemoteImagesToS3(
+          p.imageUrls,
+          `feed/${id}/${p.shortcode}`
+        );
+        return { ...p, imageUrls };
+      })
+    );
+    // 이미지가 한 장도 안 올라간 글은 제외하고 position 재정렬.
+    const kept = posts
+      .filter((p) => p.imageUrls.length > 0)
+      .map((p, i) => ({ ...p, position: i }));
 
-    // 인스타 CDN URL은 24~48시간 후 만료 → 즉시 로컬 다운로드해서 영구 보관
-    const { localUrls } = await downloadFeedImages(remoteUrls, brandName);
+    await replaceBrandPosts(id, kept);
 
-    // 피드가 비어 있으면 프로필 사진을 썸네일로 폴백 (이것도 로컬 저장)
-    let thumbnailUrl: string | null = localUrls[0] ?? null;
+    // 커버 썸네일 = 첫 글 첫 이미지. 피드가 비면 프로필 사진을 S3 에 올려 폴백.
+    let thumbnailUrl: string | null = kept[0]?.imageUrls[0] ?? null;
     if (!thumbnailUrl) {
-      const profilePic = (profile.profilePicUrlHD || profile.profilePicUrl) as string | undefined;
+      const profilePic = (profile.profilePicUrlHD || profile.profilePicUrl) as
+        | string
+        | undefined;
       if (profilePic) {
-        const { localUrls: profileLocal } = await downloadFeedImages([profilePic], brandName);
-        thumbnailUrl = profileLocal[0] ?? null;
+        const profileS3 = await uploadRemoteImagesToS3(
+          [profilePic],
+          `feed/${id}/profile`
+        );
+        thumbnailUrl = profileS3[0] ?? null;
       }
     }
+
+    // feed_thumbnails 는 호환용으로 각 글의 커버(첫 이미지) 목록을 유지.
+    const coverThumbnails = kept.map((p) => p.imageUrls[0]).filter(Boolean);
 
     const updated = await updateBrandInstagram(id, {
       instagramHandle: profile.username as string,
       instagramUrl: `https://www.instagram.com/${profile.username}/`,
       thumbnailUrl,
-      feedThumbnails: localUrls,
+      feedThumbnails: coverThumbnails,
     });
 
     return NextResponse.json({
       brand: updated,
       meta: {
         followers: profile.followersCount,
-        feedCount: localUrls.length,
+        postCount: kept.length,
+        imageCount: kept.reduce((n, p) => n + p.imageUrls.length, 0),
       },
     });
   } catch (e) {
