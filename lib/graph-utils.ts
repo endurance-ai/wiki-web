@@ -30,6 +30,14 @@ export interface GraphData {
   links: GraphLink[];
 }
 
+// 미분류 브랜드(primary_style_node_id 없음)를 묶는 합성 스타일노드.
+// 실제 style_nodes 행이 아니라 buildGraphData 가 만들어내는 가상 클러스터 —
+// 이걸 만들어주면 GraphCanvas 가 다른 클러스터와 똑같이 디스크/회전/스포크를
+// 그려준다(미분류 브랜드를 바깥 회색 링에 흩뿌리는 대신). UMAP id 와 충돌하지 않도록
+// 숫자가 아닌 문자열 id 를 쓴다.
+const UNCLASSIFIED_ID = "unclassified";
+const UNCLASSIFIED_COLOR = "#9aa0a6"; // 중립 회색
+
 // Builds the GraphData wire shape consumed unchanged by GraphCanvas:
 //   - style cluster -> {type:'cluster', name=name_ko, color, val:20}
 //   - brand        -> {type:'brand', name=brand_name, color=parent cluster color,
@@ -37,23 +45,31 @@ export interface GraphData {
 //   - cluster-member links from each brand's nodeId
 //   - brand-relation links from brand_relations
 //   - node-relation links from style_node_adjacency
+//
+// primary_style_node_id 가 없는 브랜드는 합성 "미분류" 클러스터(UNCLASSIFIED_ID)의
+// 멤버로 취급한다 → 다른 클러스터처럼 자체 디스크를 이룬다.
 export function buildGraphData(
   clusterNodes: StyleNode[],
   brands: BrandWithNode[],
   brandRelations: BrandRelation[],
   nodeRelations: StyleNodeAdjacency[]
 ): GraphData {
+  // 모든 브랜드의 "유효 클러스터 id": nodeId 가 있으면 그대로, 없으면 미분류.
+  const effClusterId = (b: BrandWithNode) => b.nodeId ?? UNCLASSIFIED_ID;
+  const hasUnclassified = brands.some((b) => !b.nodeId);
+
   // x/y_position are GLOBAL UMAP coords, but GraphCanvas's axisForce expects
   // per-cluster micro-coords in [-1,+1]. Normalize each cluster's members
   // (min-max per axis) so brands form a tidy radial spread around their style
   // node. Brands without UMAP coords get a deterministic ring position so they
-  // still orbit their cluster instead of floating.
+  // still orbit their cluster instead of floating. (미분류 브랜드는 UMAP 좌표가
+  // 없으므로 모두 이 결정론적 링 배치를 받아 미분류 디스크 안에 고르게 퍼진다.)
   const byCluster = new Map<string, BrandWithNode[]>();
   for (const b of brands) {
-    if (!b.nodeId) continue;
-    const arr = byCluster.get(b.nodeId);
+    const key = effClusterId(b);
+    const arr = byCluster.get(key);
     if (arr) arr.push(b);
-    else byCluster.set(b.nodeId, [b]);
+    else byCluster.set(key, [b]);
   }
   const axisByBrand = new Map<string, { x: number; y: number }>();
   for (const members of byCluster.values()) {
@@ -86,6 +102,17 @@ export function buildGraphData(
       color: n.color ?? "#888888",
       val: 20,
     })),
+    // 미분류 브랜드가 있으면 합성 "미분류" 클러스터를 끝에 추가 → 다른 스타일노드와
+    // 동일하게 GraphCanvas 가 링 슬롯/디스크/회전을 부여한다.
+    ...(hasUnclassified
+      ? [{
+          id: UNCLASSIFIED_ID,
+          type: "cluster" as const,
+          name: "미분류",
+          color: UNCLASSIFIED_COLOR,
+          val: 20,
+        }]
+      : []),
     // 브랜드 노드 id 에 "b" 접두사 → style_nodes 와 brand_nodes 의 bigint id 충돌 방지.
     // (둘 다 1,2,3.. 으로 시작 → 접두사 없이는 cluster-member 링크의 source="1"(primary_
     //  style_node_id)이 브랜드 id=1 로 잘못 연결됨.)
@@ -93,25 +120,23 @@ export function buildGraphData(
       id: "b" + b.id,
       type: "brand" as const,
       name: b.name,
-      color: b.node?.color ?? "#888888",
+      color: b.nodeId ? (b.node?.color ?? "#888888") : UNCLASSIFIED_COLOR,
       thumbnailUrl: b.thumbnailUrl ?? undefined,
-      nodeId: b.nodeId ?? undefined,
-      axisX: b.nodeId ? (axisByBrand.get(b.id)?.x ?? null) : null,
-      axisY: b.nodeId ? (axisByBrand.get(b.id)?.y ?? null) : null,
+      nodeId: effClusterId(b),
+      axisX: axisByBrand.get(b.id)?.x ?? null,
+      axisY: axisByBrand.get(b.id)?.y ?? null,
       val: 8,
     })),
   ];
 
   const links: GraphLink[] = [
-    // cluster → brand membership edges
-    ...brands
-      .filter((b) => b.nodeId)
-      .map((b) => ({
-        source: b.nodeId!,
-        target: "b" + b.id,
-        strength: 1.0,
-        type: "cluster-member" as const,
-      })),
+    // cluster → brand membership edges (미분류 포함 — 모든 브랜드가 유효 클러스터를 가짐)
+    ...brands.map((b) => ({
+      source: effClusterId(b),
+      target: "b" + b.id,
+      strength: 1.0,
+      type: "cluster-member" as const,
+    })),
     // brand ↔ brand relations
     ...brandRelations.map((r) => ({
       source: "b" + r.brandIdA,

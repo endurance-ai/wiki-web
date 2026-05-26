@@ -58,6 +58,22 @@ export interface StyleNodeAdjacency {
   source: string;
 }
 
+// One Instagram post for a brand (carousel children stored as ordered image_urls).
+// Mirrors wiki.brand_instagram_posts (004 migration). Cover image = imageUrls[0].
+export interface BrandInstagramPost {
+  id: string;
+  brandId: string;
+  shortcode: string;
+  postUrl: string | null;
+  type: string | null;
+  caption: string | null;
+  imageUrls: string[];
+  likesCount: number | null;
+  commentsCount: number | null;
+  takenAt: Date | null;
+  position: number;
+}
+
 export interface BrandComment {
   id: string;
   brandId: string;

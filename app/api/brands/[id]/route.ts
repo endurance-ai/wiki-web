@@ -5,6 +5,7 @@ import {
   deleteBrand,
   checkDuplicateExcept,
 } from "@/lib/repositories/brands";
+import { getBrandPosts } from "@/lib/repositories/posts";
 import { BrandUpdateSchema, isBigintId } from "@/lib/validation";
 import { writesDisabled } from "@/lib/write-guard";
 
@@ -14,9 +15,9 @@ export async function GET(
 ) {
   const { id } = await params;
   if (!isBigintId(id)) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const brand = await getBrandById(id);
+  const [brand, posts] = await Promise.all([getBrandById(id), getBrandPosts(id)]);
   if (!brand) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(brand);
+  return NextResponse.json({ ...brand, posts });
 }
 
 export async function PUT(
